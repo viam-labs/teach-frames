@@ -9,9 +9,11 @@ import (
 	"go.viam.com/rdk/components/posetracker"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module"
+	"go.viam.com/rdk/services/worldstatestore"
 
-	// Importing the model package triggers its init(), which registers the model.
+	// Importing the model packages triggers their init(), which registers the models.
 	teachtracker "github.com/viam-labs/teach-frames/models/posetracker"
+	wss "github.com/viam-labs/teach-frames/models/worldstatestore"
 )
 
 func main() {
@@ -28,6 +30,10 @@ func mainWithArgs(ctx context.Context, args []string, logger logging.Logger) err
 	defer m.Close(ctx)
 
 	if err = m.AddModelFromRegistry(ctx, posetracker.API, teachtracker.Model); err != nil {
+		return err
+	}
+
+	if err = m.AddModelFromRegistry(ctx, worldstatestore.API, wss.Model); err != nil {
 		return err
 	}
 
