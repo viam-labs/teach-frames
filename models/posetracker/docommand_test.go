@@ -295,3 +295,68 @@ func TestDefineFramePersistErrorRollbackUpsert(t *testing.T) {
 	test.That(t, ok, test.ShouldBeTrue)
 	test.That(t, spatialmath.PoseAlmostEqual(pif.Pose(), oldPose), test.ShouldBeTrue)
 }
+
+// TestDefineFramePersistsFullSet verifies that saveFrames serializes the entire
+// committed set (not just the newly defined frame) on each successful commit.
+func TestDefineFramePersistsFullSet(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+
+	// Pre-populate two frames directly in the store.
+	pt.store.SetFrame("frame_a", "world", spatialmath.NewPoseFromPoint(r3.Vector{X: 1}))
+	pt.store.SetFrame("frame_b", "world", spatialmath.NewPoseFromPoint(r3.Vector{X: 2}))
+
+	// Capture a point and define a third frame.
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 3}),
+	}}
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"define_frame": map[string]interface{}{"name": "frame_c", "method": "point"}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["committed"], test.ShouldBeTrue)
+
+	// All three frames must appear in the persisted snapshot.
+	test.That(t, len(fake.Saved), test.ShouldEqual, 3)
+	savedNames := make(map[string]bool, len(fake.Saved))
+	for _, s := range fake.Saved {
+		savedNames[s.Name] = true
+	}
+	test.That(t, savedNames["frame_a"], test.ShouldBeTrue)
+	test.That(t, savedNames["frame_b"], test.ShouldBeTrue)
+	test.That(t, savedNames["frame_c"], test.ShouldBeTrue)
+}
+
+// TestDefineFrameThreePointCollinear verifies that collinear points produce an
+// error, leave the buffer intact, and do not commit any frame to the store.
+func TestDefineFrameThreePointCollinear(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 0, Y: 0, Z: 0}),
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 0, Z: 0}),
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 2, Y: 0, Z: 0}), // collinear with the first two
+	}}
+	for i := 0; i < 3; i++ {
+		_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_point": map[string]interface{}{}})
+		test.That(t, err, test.ShouldBeNil)
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"define_frame": map[string]interface{}{"name": "bad_frame", "method": "3point"}})
+	test.That(t, err, test.ShouldNotBeNil)
+
+	// Buffer must still be intact (not cleared on failure).
+	test.That(t, pt.store.BufferLen(), test.ShouldEqual, 3)
+
+	// No frame should have been committed to the store.
+	_, ok := pt.store.GetFrame("bad_frame")
+	test.That(t, ok, test.ShouldBeFalse)
+
+	// Nothing should have been persisted.
+	test.That(t, len(fake.Saved), test.ShouldEqual, 0)
+}

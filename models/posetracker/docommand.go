@@ -57,9 +57,26 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 // defineFrame computes a frame from the capture buffer using the given method,
 // persists the full committed set, and clears the buffer on success.
 func (pt *teachTracker) defineFrame(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
-	args, _ := raw.(map[string]interface{})
-	name, _ := args["name"].(string)
-	method, _ := args["method"].(string)
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("define_frame args must be an object")
+	}
+
+	var name string
+	if nameVal, hasName := args["name"]; hasName {
+		name, ok = nameVal.(string)
+		if !ok {
+			return nil, errors.New("name must be a string")
+		}
+	}
+
+	var method string
+	if methodVal, hasMethod := args["method"]; hasMethod {
+		method, ok = methodVal.(string)
+		if !ok {
+			return nil, errors.New("method must be a string")
+		}
+	}
 
 	if name == "" {
 		return nil, errors.New("define_frame requires a non-empty name")
@@ -77,6 +94,9 @@ func (pt *teachTracker) defineFrame(ctx context.Context, raw interface{}) (map[s
 			return nil, fmt.Errorf("3point requires 3 captured points, have %d", len(buf))
 		}
 		pose, err = frames.ComputeThreePoint(buf[0].Point(), buf[1].Point(), buf[2].Point())
+		if err != nil {
+			return nil, fmt.Errorf("3point compute failed: %w", err)
+		}
 	case "point":
 		if len(buf) < 1 {
 			return nil, fmt.Errorf("point requires 1 captured point, have %d", len(buf))
@@ -90,9 +110,12 @@ func (pt *teachTracker) defineFrame(ctx context.Context, raw interface{}) (map[s
 	default:
 		return nil, fmt.Errorf("unknown method %q (want 3point|point|tcp_snapshot)", method)
 	}
-	if err != nil {
-		return nil, err
-	}
+
+	// commitMu serializes the get→set→persist→rollback sequence so concurrent
+	// define calls (and future delete/clear) cannot interleave and corrupt the
+	// persisted set or produce an incorrect rollback.
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
 
 	// Capture the previous frame (if any) so we can roll back on persist failure.
 	prev, hadPrev := pt.store.GetFrame(name)

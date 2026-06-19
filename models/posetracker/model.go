@@ -3,6 +3,7 @@ package posetracker
 
 import (
 	"context"
+	"sync"
 
 	"go.viam.com/rdk/components/posetracker"
 	"go.viam.com/rdk/logging"
@@ -57,6 +58,12 @@ type teachTracker struct {
 	source    posesource.PoseSource
 	persist   persist.ConfigPersister
 	destFrame string
+
+	// commitMu serializes all config-persisting mutations (define/delete/clear) so
+	// the get→set→persist→rollback sequence remains atomic w.r.t. concurrent commits
+	// and the persisted frame set stays consistent. This is intentionally separate from
+	// FrameStore's internal RWMutex, which guards individual store ops.
+	commitMu sync.Mutex
 }
 
 // newPoseTracker is the resource constructor registered with the RDK.
