@@ -67,11 +67,15 @@ func (s *FrameStore) SetFrame(name, parent string, pose spatialmath.Pose) bool {
 
 // GetFrame retrieves the PoseInFrame stored under name.
 // The second return value is false when no such frame exists.
+// A defensive copy is returned so callers cannot mutate stored state.
 func (s *FrameStore) GetFrame(name string) (*referenceframe.PoseInFrame, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	f, ok := s.frames[name]
-	return f, ok
+	if !ok {
+		return nil, false
+	}
+	return copyPIF(f), true
 }
 
 // DeleteFrame removes the named frame and returns true if it was present.
@@ -107,20 +111,29 @@ func (s *FrameStore) FrameNames() []string {
 // Snapshot returns a FrameSystemPoses map for the requested names.
 // When names is nil or empty, all committed frames are returned.
 // Non-existent names are silently ignored.
+// Defensive copies are returned so callers cannot mutate stored state.
 func (s *FrameStore) Snapshot(names []string) referenceframe.FrameSystemPoses {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := referenceframe.FrameSystemPoses{}
 	if len(names) == 0 {
 		for n, f := range s.frames {
-			out[n] = f
+			out[n] = copyPIF(f)
 		}
 		return out
 	}
 	for _, n := range names {
 		if f, ok := s.frames[n]; ok {
-			out[n] = f
+			out[n] = copyPIF(f)
 		}
 	}
 	return out
+}
+
+// copyPIF returns a fresh PoseInFrame so callers cannot mutate stored state.
+// Note: NewPoseInFrame sets only parent and pose; the internal name field (distinct
+// from parent) is intentionally left empty because the store keyed by body name does
+// not rely on the PIF's own name field.
+func copyPIF(f *referenceframe.PoseInFrame) *referenceframe.PoseInFrame {
+	return referenceframe.NewPoseInFrame(f.Parent(), f.Pose())
 }
