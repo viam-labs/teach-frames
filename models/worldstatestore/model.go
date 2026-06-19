@@ -87,9 +87,16 @@ func (m *mirror) GetTransform(ctx context.Context, id []byte, _ map[string]any) 
 	return nil, fmt.Errorf("no transform for uuid %x", id)
 }
 
-// StreamTransformChanges is not implemented in this task (Task 12).
+// StreamTransformChanges returns a stream that stays open until the context ends.
+// Option-1 (rebuild-and-reseed): this service carries no live deltas. When a frame
+// change is committed, the PoseTracker (and this WSS) are rebuilt, causing the
+// visualizer to reconnect and reseed via ListUUIDs/GetTransform. The stream simply
+// blocks until the caller's context is cancelled, at which point Next returns
+// ctx.Err(). No goroutine is spawned — NewTransformChangeStreamFromChannel is
+// purely closure-based.
 func (m *mirror) StreamTransformChanges(ctx context.Context, _ map[string]any) (*worldstatestore.TransformChangeStream, error) {
-	return nil, fmt.Errorf("StreamTransformChanges not yet implemented")
+	ch := make(chan worldstatestore.TransformChange) // never written; unblocks only via ctx
+	return worldstatestore.NewTransformChangeStreamFromChannel(ctx, ch), nil
 }
 
 // Close is a no-op.

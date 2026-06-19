@@ -3,6 +3,7 @@ package worldstatestore
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/logging"
@@ -49,4 +50,37 @@ func TestGetTransformUnknownUUID(t *testing.T) {
 	svc := newForTest(t, fakePTWith(referenceframe.FrameSystemPoses{}))
 	_, err := svc.GetTransform(context.Background(), uuidForName("nope"), nil)
 	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestStreamClosesOnContextCancel(t *testing.T) {
+	svc := newForTest(t, inject.NewPoseTracker("test-pt"))
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := svc.StreamTransformChanges(ctx, nil)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, stream, test.ShouldNotBeNil)
+	cancel()
+	_, nextErr := stream.Next()
+	test.That(t, nextErr, test.ShouldNotBeNil) // ctx.Err() or io.EOF after cancel
+}
+
+func TestStreamBlocksWhileContextAlive(t *testing.T) {
+	svc := newForTest(t, inject.NewPoseTracker("test-pt"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := svc.StreamTransformChanges(ctx, nil)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, stream, test.ShouldNotBeNil)
+
+	done := make(chan struct{})
+	go func() {
+		stream.Next() //nolint:errcheck
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("stream.Next() returned before context was cancelled; expected it to block")
+	case <-time.After(50 * time.Millisecond):
+		// Good: Next is still blocking after 50 ms with a live context.
+	}
 }
