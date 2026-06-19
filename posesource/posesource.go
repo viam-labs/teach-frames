@@ -19,12 +19,19 @@ type PoseSource interface {
 type MotionSource struct {
 	Motion    motion.Service
 	Component string
+	// DestFrame is the reference frame for GetPose. Defaults to world if empty.
 	DestFrame string
 }
 
 // Capture queries motion.GetPose for the configured component/destination frame.
+// If DestFrame is empty it defaults to referenceframe.World rather than passing
+// an empty string to GetPose.
 func (m *MotionSource) Capture(ctx context.Context) (*referenceframe.PoseInFrame, error) {
-	return m.Motion.GetPose(ctx, m.Component, m.DestFrame, nil, nil)
+	dest := m.DestFrame
+	if dest == "" {
+		dest = referenceframe.World
+	}
+	return m.Motion.GetPose(ctx, m.Component, dest, nil, nil)
 }
 
 // Fake returns queued poses, popping one per Capture. For tests.

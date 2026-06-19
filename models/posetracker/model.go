@@ -93,22 +93,25 @@ func newPoseTracker(
 	// Persistence: warn and continue if creds are absent; do not fail construction.
 	p, perr := persist.NewAppPersister(conf.ResourceName().Name)
 	if perr != nil {
-		logger.Warnw("frame persistence disabled", "reason", perr)
+		logger.Warnw("frame persistence disabled", "component", conf.ResourceName().Name, "reason", perr)
 	} else {
 		pt.persist = p
 	}
 
 	// Load committed frames from config.
+	// One malformed frame should not brick the component or the live capture path,
+	// matching the warn-and-continue stance used for persistence above.
 	for _, frameSpec := range cfg.Frames {
 		pose, ferr := frameSpec.ToPose()
 		if ferr != nil {
-			return nil, ferr
+			logger.Warnw("skipping invalid taught frame", "name", frameSpec.Name, "err", ferr)
+			continue
 		}
 		parent := frameSpec.Parent
 		if parent == "" {
 			parent = dest
 		}
-		fs.SetFrame(frameSpec.Name, parent, pose)
+		pt.store.SetFrame(frameSpec.Name, parent, pose)
 	}
 
 	return pt, nil

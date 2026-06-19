@@ -8,6 +8,8 @@ import (
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
+
+	injectmotion "go.viam.com/rdk/testutils/inject/motion"
 )
 
 func TestFakeSourceReturnsQueuedPoses(t *testing.T) {
@@ -34,4 +36,28 @@ func TestFakeSourceExhausted(t *testing.T) {
 func TestMotionSourceImplementsInterface(t *testing.T) {
 	var _ PoseSource = (*MotionSource)(nil)
 	var _ PoseSource = (*Fake)(nil)
+}
+
+func TestMotionSourceEmptyDestFrameUsesWorld(t *testing.T) {
+	var capturedDest string
+	injMotion := injectmotion.NewMotionService("builtin")
+	injMotion.GetPoseFunc = func(
+		_ context.Context,
+		_ string,
+		destinationFrame string,
+		_ []*referenceframe.LinkInFrame,
+		_ map[string]interface{},
+	) (*referenceframe.PoseInFrame, error) {
+		capturedDest = destinationFrame
+		return referenceframe.NewPoseInFrame(referenceframe.World, spatialmath.NewZeroPose()), nil
+	}
+
+	ms := &MotionSource{
+		Motion:    injMotion,
+		Component: "arm",
+		DestFrame: "", // deliberately empty
+	}
+	_, err := ms.Capture(context.Background())
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, capturedDest, test.ShouldEqual, referenceframe.World)
 }
