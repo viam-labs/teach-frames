@@ -6,8 +6,12 @@ import (
 
 	"go.viam.com/utils"
 
+	"go.viam.com/rdk/components/posetracker"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/module"
+
+	// Importing the model package triggers its init(), which registers the model.
+	teachtracker "github.com/viam-labs/teach-frames/models/posetracker"
 )
 
 func main() {
@@ -22,6 +26,10 @@ func mainWithArgs(ctx context.Context, args []string, logger logging.Logger) err
 		return err
 	}
 	defer m.Close(ctx)
+
+	if err = m.AddModelFromRegistry(ctx, posetracker.API, teachtracker.Model); err != nil {
+		return err
+	}
 
 	if err = m.Start(ctx); err != nil {
 		return err
