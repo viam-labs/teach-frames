@@ -12,7 +12,8 @@ const collinearEpsilon = 1e-9
 
 // ComputeThreePoint builds a pose whose origin is p1, +X points toward p2, and
 // p3 lies in the +XY half-plane (UR-style plane teaching). Returns an error if
-// the three points are collinear or coincident.
+// the three points are collinear or coincident. Inputs are assumed finite;
+// NaN or Inf coordinates are not validated and the caller is responsible for ensuring valid values.
 func ComputeThreePoint(p1, p2, p3 r3.Vector) (spatialmath.Pose, error) {
 	xAxis := p2.Sub(p1)
 	if xAxis.Norm() < collinearEpsilon {
