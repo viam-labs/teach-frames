@@ -49,3 +49,10 @@ func TestFrameSpecJSONRoundTrip(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, spatialmath.PoseAlmostEqual(restoredPose, pose), test.ShouldBeTrue)
 }
+
+func TestFrameSpecZeroPoseIsIdentity(t *testing.T) {
+	spec := FrameSpec{Name: "z", Pose: PoseSpec{}}
+	got, err := spec.ToPose()
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, spatialmath.PoseAlmostEqual(got, spatialmath.NewZeroPose()), test.ShouldBeTrue)
+}
