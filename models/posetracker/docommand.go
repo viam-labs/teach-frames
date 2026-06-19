@@ -49,6 +49,19 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "define_frame"):
 		return pt.defineFrame(ctx, cmd["define_frame"])
+
+	case has(cmd, "list_frames"):
+		out := map[string]interface{}{}
+		for n, pif := range pt.store.Snapshot(nil) {
+			out[n] = poseToMap(pif.Pose())
+		}
+		return map[string]interface{}{"frames": out}, nil
+
+	case has(cmd, "delete_frame"):
+		return pt.deleteFrame(ctx, cmd["delete_frame"])
+
+	case has(cmd, "clear_frames"):
+		return pt.clearFrames(ctx)
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -139,6 +152,63 @@ func (pt *teachTracker) defineFrame(ctx context.Context, raw interface{}) (map[s
 		"replaced":  replaced,
 		"pose":      poseToMap(pose),
 	}, nil
+}
+
+// deleteFrame removes a single named frame from the store, persists the updated
+// set, and restores the frame on persist failure (rollback).
+func (pt *teachTracker) deleteFrame(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("delete_frame args must be an object")
+	}
+	nameVal, present := args["name"]
+	if !present {
+		return nil, errors.New("delete_frame requires a non-empty name")
+	}
+	name, isStr := nameVal.(string)
+	if !isStr {
+		return nil, errors.New("name must be a string")
+	}
+	if name == "" {
+		return nil, errors.New("delete_frame requires a non-empty name")
+	}
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot delete frame")
+	}
+
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	prev, hadPrev := pt.store.GetFrame(name)
+	existed := pt.store.DeleteFrame(name)
+	if err := pt.saveFrames(ctx); err != nil {
+		if hadPrev {
+			pt.store.SetFrame(name, prev.Parent(), prev.Pose())
+		}
+		return nil, fmt.Errorf("persist failed, delete not committed: %w", err)
+	}
+	return map[string]interface{}{"deleted": existed}, nil
+}
+
+// clearFrames removes all committed frames, persists the empty set, and restores
+// all frames on persist failure (rollback).
+func (pt *teachTracker) clearFrames(ctx context.Context) (map[string]interface{}, error) {
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot clear frames")
+	}
+
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	prev := pt.store.Snapshot(nil) // defensive copies for rollback
+	n := pt.store.ClearFrames()
+	if err := pt.saveFrames(ctx); err != nil {
+		for name, pif := range prev {
+			pt.store.SetFrame(name, pif.Parent(), pif.Pose())
+		}
+		return nil, fmt.Errorf("persist failed, clear not committed: %w", err)
+	}
+	return map[string]interface{}{"deleted": n}, nil
 }
 
 // saveFrames serializes the full committed set and persists it.

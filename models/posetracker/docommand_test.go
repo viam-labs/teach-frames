@@ -9,6 +9,7 @@ import (
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
 
+	tfconfig "github.com/viam-labs/teach-frames/config"
 	"github.com/viam-labs/teach-frames/persist"
 	"github.com/viam-labs/teach-frames/posesource"
 )
@@ -328,6 +329,122 @@ func TestDefineFramePersistsFullSet(t *testing.T) {
 	test.That(t, savedNames["frame_a"], test.ShouldBeTrue)
 	test.That(t, savedNames["frame_b"], test.ShouldBeTrue)
 	test.That(t, savedNames["frame_c"], test.ShouldBeTrue)
+}
+
+// --- list_frames / delete_frame / clear_frames tests ---
+
+func TestListDeleteClearFrames(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world",
+		Frames: []tfconfig.FrameSpec{{Name: "a", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}}}})
+	pt.persist = &persist.Fake{}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"list_frames": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	frames := resp["frames"].(map[string]interface{})
+	test.That(t, len(frames), test.ShouldEqual, 1)
+
+	resp, err = pt.DoCommand(context.Background(), map[string]interface{}{"delete_frame": map[string]interface{}{"name": "a"}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["deleted"], test.ShouldBeTrue)
+
+	resp, err = pt.DoCommand(context.Background(), map[string]interface{}{"clear_frames": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["deleted"], test.ShouldEqual, 0)
+}
+
+func TestDeleteFrameNonExistent(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"delete_frame": map[string]interface{}{"name": "nope"}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["deleted"], test.ShouldBeFalse)
+}
+
+func TestDeleteFramePersistDisabled(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world",
+		Frames: []tfconfig.FrameSpec{{Name: "a", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}}}})
+	pt.persist = nil
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"delete_frame": map[string]interface{}{"name": "a"}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestDeleteFramePersistErrorRollback(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world",
+		Frames: []tfconfig.FrameSpec{{Name: "a", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}}}})
+	pt.persist = &persist.Fake{Err: errors.New("disk full")}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"delete_frame": map[string]interface{}{"name": "a"}})
+	test.That(t, err, test.ShouldNotBeNil)
+
+	// Frame must be restored after persist failure.
+	_, ok := pt.store.GetFrame("a")
+	test.That(t, ok, test.ShouldBeTrue)
+}
+
+func TestClearFramesTwoFrames(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world",
+		Frames: []tfconfig.FrameSpec{
+			{Name: "a", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}},
+			{Name: "b", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}},
+		}})
+	fake := &persist.Fake{}
+	pt.persist = fake
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_frames": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["deleted"], test.ShouldEqual, 2)
+
+	// Store must be empty.
+	names := pt.store.FrameNames()
+	test.That(t, len(names), test.ShouldEqual, 0)
+
+	// Persist must have been called with an empty set.
+	test.That(t, len(fake.Saved), test.ShouldEqual, 0)
+}
+
+func TestClearFramesPersistErrorRollback(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world",
+		Frames: []tfconfig.FrameSpec{
+			{Name: "a", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}},
+			{Name: "b", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}},
+		}})
+	pt.persist = &persist.Fake{Err: errors.New("disk full")}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_frames": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+
+	// Both frames must be restored after rollback.
+	_, okA := pt.store.GetFrame("a")
+	test.That(t, okA, test.ShouldBeTrue)
+	_, okB := pt.store.GetFrame("b")
+	test.That(t, okB, test.ShouldBeTrue)
+}
+
+func TestClearFramesPersistDisabled(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world",
+		Frames: []tfconfig.FrameSpec{{Name: "a", Parent: "world", Pose: tfconfig.PoseSpec{OZ: 1}}}})
+	pt.persist = nil
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_frames": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestDeleteFrameEmptyName(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"delete_frame": map[string]interface{}{"name": ""}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestDeleteFrameMissingName(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"delete_frame": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
 }
 
 // TestDefineFrameThreePointCollinear verifies that collinear points produce an
