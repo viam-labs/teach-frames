@@ -98,7 +98,7 @@ func newPoseTracker(
 	}
 
 	// Persistence: warn and continue if creds are absent; do not fail construction.
-	p, perr := persist.NewAppPersister(conf.ResourceName().Name)
+	p, perr := persist.NewAppPersister(conf.ResourceName().Name, logger)
 	if perr != nil {
 		logger.Warnw("frame persistence disabled", "component", conf.ResourceName().Name, "reason", perr)
 	} else {

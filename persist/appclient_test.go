@@ -156,6 +156,12 @@ func TestSetComponentFrames_InputNotMutated(t *testing.T) {
 	origArm, _ := origComponents[0].(map[string]interface{})
 	origArmAttrs, _ := origArm["attributes"].(map[string]interface{})
 
+	// Capture the TARGET component's original attributes and frames value so we
+	// can assert that in-place mutation of the target is also guarded.
+	origTracker, _ := origComponents[1].(map[string]interface{})
+	origTrackerAttrs, _ := origTracker["attributes"].(map[string]interface{})
+	origTrackerFrames := origTrackerAttrs["frames"]
+
 	newFrames := []config.FrameSpec{{Name: "z"}}
 	_, err := setComponentFrames(cfg, "teach-tracker", newFrames)
 	test.That(t, err, test.ShouldBeNil)
@@ -165,6 +171,121 @@ func TestSetComponentFrames_InputNotMutated(t *testing.T) {
 
 	// The original cfg map must still point at the old components slice.
 	test.That(t, len(origComponents), test.ShouldEqual, 2)
+
+	// The original target's attributes map must not have been mutated — the
+	// patched frames must NOT have leaked back into the input map.
+	// The original frames value should still be the old single-element slice,
+	// not the new "z" slice.
+	oldFrames, ok := origTrackerFrames.([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(oldFrames), test.ShouldEqual, 1)
+	oldFrame, _ := oldFrames[0].(map[string]interface{})
+	test.That(t, oldFrame["name"], test.ShouldEqual, "old_frame")
+	// Confirm the attrs map entry still points at the original slice.
+	test.That(t, origTrackerAttrs["frames"], test.ShouldResemble, origTrackerFrames)
+}
+
+// --- Guard-branch tests (Fix I1) ---
+
+// TestSetComponentFrames_ComponentsNotAList covers the guard that fires when
+// the "components" key holds a value that is not a []interface{}.
+func TestSetComponentFrames_ComponentsNotAList(t *testing.T) {
+	for _, badVal := range []interface{}{
+		"not-a-list",
+		map[string]interface{}{"key": "value"},
+		42,
+	} {
+		cfg := map[string]interface{}{
+			"components": badVal,
+		}
+		_, err := setComponentFrames(cfg, "teach-tracker", nil)
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "not a list")
+	}
+}
+
+// TestSetComponentFrames_NonMapEntrySkipped verifies that a non-map entry in
+// the components slice (e.g. a bare string) is silently skipped and does not
+// panic. The real target component must still be patched successfully.
+func TestSetComponentFrames_NonMapEntrySkipped(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			// A malformed entry that is not a map — must be skipped.
+			"not-a-map-entry",
+			// The real target.
+			map[string]interface{}{
+				"name":       "teach-tracker",
+				"type":       "generic",
+				"attributes": map[string]interface{}{},
+			},
+		},
+	}
+	newFrames := []config.FrameSpec{{Name: "q", Parent: "world"}}
+
+	got, err := setComponentFrames(cfg, "teach-tracker", newFrames)
+	test.That(t, err, test.ShouldBeNil)
+
+	components, ok := got["components"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(components), test.ShouldEqual, 2)
+
+	// First entry is the malformed string — must be preserved as-is.
+	test.That(t, components[0], test.ShouldEqual, "not-a-map-entry")
+
+	// Second entry is the patched target.
+	tracker, ok := components[1].(map[string]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	attrs, ok := tracker["attributes"].(map[string]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	framesRaw, ok := attrs["frames"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(framesRaw), test.ShouldEqual, 1)
+}
+
+// TestSetComponentFrames_NonMapAttributes verifies that when a target
+// component's "attributes" value is not a map (e.g. a string), it is silently
+// replaced with a fresh map containing the new frames key — no panic.
+func TestSetComponentFrames_NonMapAttributes(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{
+				"name":       "teach-tracker",
+				"type":       "generic",
+				"attributes": "this-is-not-a-map",
+			},
+		},
+	}
+	newFrames := []config.FrameSpec{{Name: "r", Parent: "base"}}
+
+	got, err := setComponentFrames(cfg, "teach-tracker", newFrames)
+	test.That(t, err, test.ShouldBeNil)
+
+	components, ok := got["components"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	tracker, ok := components[0].(map[string]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+
+	// attributes must now be a proper map with frames set.
+	attrs, ok := tracker["attributes"].(map[string]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	framesRaw, ok := attrs["frames"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(framesRaw), test.ShouldEqual, 1)
+	frame, _ := framesRaw[0].(map[string]interface{})
+	test.That(t, frame["name"], test.ShouldEqual, "r")
+}
+
+// TestSetComponentFrames_NoComponentsKey documents that when the "components"
+// key is absent entirely the helper returns a graceful "not found" error — not
+// a panic and not a nil error.
+func TestSetComponentFrames_NoComponentsKey(t *testing.T) {
+	cfg := map[string]interface{}{
+		"other_key": "value",
+	}
+	_, err := setComponentFrames(cfg, "teach-tracker", nil)
+	test.That(t, err, test.ShouldNotBeNil)
+	// Component is not found because the components list is empty.
+	test.That(t, err.Error(), test.ShouldContainSubstring, "teach-tracker")
 }
 
 func TestSetComponentFrames_EmptyFramesAllowed(t *testing.T) {

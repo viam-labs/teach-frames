@@ -735,7 +735,7 @@ func NewAppPersister(componentName string) (*AppPersister, error) {
 //
 // IMPLEMENTATION NOTE: build the app client from the env creds using the Viam Go
 // SDK helper (see platform-apis docs / `app` package). GetRobotPart returns the
-// part with a `RobotConfig` *structpb.Struct; mutate only this component's
+// part with a `RobotConfig` map[string]interface{}; mutate only this component's
 // `attributes.frames` within it and pass it back to UpdateRobotPart. Verify the
 // exact app client constructor + request/response shapes against
 // go.viam.com/api@<version>/app/v1 before writing this.
@@ -1610,7 +1610,7 @@ git add meta.json README.md ; git commit -m "docs: meta.json + README + integrat
 
 **Step 1:** Implement `AppPersister.Save` against `go.viam.com/api/app/v1`:
 - Build the app client from env creds (see platform-APIs docs for the SDK helper).
-- `GetRobotPart(partID)` → part with `RobotConfig` struct.
+- `GetRobotPart(partID)` → part with `RobotConfig` as `map[string]interface{}`.
 - Walk `components`, find the entry whose `name == ComponentName`, set `attributes.frames` to the serialized specs (marshal `[]config.FrameSpec` into the struct).
 - `UpdateRobotPart(partID, name, robotConfig)`.
 
