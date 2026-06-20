@@ -88,8 +88,6 @@ If any of these variables is absent at startup, persistence is **disabled** — 
 
 See https://docs.viam.com/build-modules/platform-apis/ for the env var names and the SDK helper used to build the app client.
 
-> **Status note:** `AppPersister.Save` (the actual API call in `persist/appclient.go`) returns "not yet implemented" and will be completed in Task 15. Until then, `define_frame`, `delete_frame`, and `clear_frames` will fail at the persist step even when credentials are present. `capture_point`, `get_buffer`, `clear_buffer`, and `list_frames` work normally.
-
 ## Example config
 
 ```json
