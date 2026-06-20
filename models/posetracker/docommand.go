@@ -11,13 +11,16 @@ import (
 	"github.com/viam-labs/teach-frames/frames"
 )
 
-// DoCommand dispatches buffer-management verbs for the teach-frames pose tracker.
-// Supported commands (single-key maps):
+// DoCommand dispatches buffer-management and frame-management verbs for the
+// teach-frames pose tracker. Supported commands (single-key maps):
 //
-//	{"capture_point": {}}  — read the current TCP pose and append it to the capture buffer.
-//	{"get_buffer": {}}     — return all poses currently in the capture buffer.
-//	{"clear_buffer": {}}   — empty the capture buffer and return the count removed.
-//	{"define_frame": {...}} — compute a frame from the buffer, persist it, and clear the buffer.
+//	{"capture_point": {}}                                    — read the current TCP pose and append it to the capture buffer.
+//	{"get_buffer": {}}                                       — return all poses currently in the capture buffer.
+//	{"clear_buffer": {}}                                     — empty the capture buffer and return the count removed.
+//	{"define_frame": {"name": "<n>", "method": "<m>"}}       — compute a frame from the buffer (methods: 3point|point|tcp_snapshot), persist it, and clear the buffer.
+//	{"list_frames": {}}                                      — return all currently committed frames.
+//	{"delete_frame": {"name": "<n>"}}                        — remove a single named frame and persist the updated set.
+//	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))

@@ -1,0 +1,11 @@
+{
+  "module_id": "viam-labs:teach-frames",
+  "visibility": "private",
+  "url": "https://github.com/viam-labs/teach-frames",
+  "description": "Teach arbitrary workcell frames by jogging an arm; mirror to world_state_store for visualization.",
+  "models": [
+    { "api": "rdk:component:pose_tracker", "model": "viam-labs:teach-frames:pose-tracker" },
+    { "api": "rdk:service:world_state_store", "model": "viam-labs:teach-frames:world-state-store" }
+  ],
+  "entrypoint": "bin/teach-frames"
+}
