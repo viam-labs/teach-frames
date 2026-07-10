@@ -16,11 +16,25 @@ Two capabilities, prioritized in this order:
 
 1. **TCP position** — 4-point pivot method: touch the same fixed world point
    from ≥4 arm orientations and least-squares solve for the tool tip offset.
-2. **TCP orientation** — 2-point axis extension: after the tip is known, touch
-   two more points that fix the tool's +Z (approach) axis and +X direction.
+2. **TCP orientation** — defaults to the flange orientation (identity relative
+   to the flange); optionally set explicitly by passing a known tool rotation
+   (from CAD/datasheet) in the teach command.
 
 Orientation is optional: if the tool axis already matches the arm flange
 orientation, position-only is a complete calibration.
+
+> **Note on orientation method (revised during planning).** An earlier draft
+> proposed a "2-point axis extension" — touching two more points with the same
+> tip to fix the tool axes. That is geometrically impossible: the tip is a
+> single point on a rigid tool, so once the pivot solves the tip offset `t`, the
+> tip's world position at any capture is fully determined by `t` and the flange
+> pose (`R_i·t + p_i`) and carries **zero** additional orientation information.
+> Teaching orientation requires either an external reference or a second tool
+> feature. This phase therefore ships orientation as **identity-default plus
+> explicit input**. An **alignment-capture** method (physically align the tool
+> to a known reference direction and capture the flange orientation once,
+> `R_tool_in_flange = R_flangeᵀ · R_reference`) is deferred to the app phase,
+> where physical alignment gets real visual feedback.
 
 ## Scope
 
@@ -48,9 +62,9 @@ These were settled during brainstorming:
   `tcp_component`, so the component that *moves* (arm) is decoupled from the
   component whose tip is *taught* (tool/gripper). The arm is the source of the
   flange pose the pivot math requires.
-- **Axis-point orientation.** Reuses the cross-product / orthonormalization
-  path already in `frames/compute.go`, expressed in flange coordinates, rather
-  than an alignment-capture method that would depend on the (deferred) app.
+- **Orientation via identity-default plus explicit input.** The axis-point
+  method was found geometrically impossible during planning (see the note under
+  Purpose); orientation defaults to identity and can be set explicitly.
 - **Two-stage teach.** Position and orientation are separate commands so a tip
   can be taught and persisted independently of orientation.
 
@@ -78,31 +92,39 @@ All commands are sent to the `pose-tracker` component.
 |---|---|---|---|
 | `capture_tcp_point` | `{}` | Read `arm.EndPosition` and append to the TCP buffer. | `index`, `buffer_len`, `pose` |
 | `teach_tcp_position` | `{}` | Least-squares pivot solve over buffered points → tip offset + RMS fit residual; persist the translation to `tcp_component.frame`; clear the buffer. | `offset`, `residual_rms`, `committed` |
-| `teach_tcp_orientation` | `{}` | Solve orientation from the 2 axis points (origin = tip, +Z = point 1, +X from point 2 in the +XZ half-plane); persist the rotation to `tcp_component.frame`. | `orientation`, `committed` |
+| `teach_tcp_orientation` | `{"o_x","o_y","o_z","theta"}` | Persist an explicit tool orientation (orientation-vector degrees) to `tcp_component.frame`, leaving the taught translation intact. Omitting this command leaves orientation at identity. | `orientation`, `committed` |
 | `get_tcp_buffer` | `{}` | Return all poses in the TCP buffer. | `points` |
 | `clear_tcp_buffer` | `{}` | Empty the TCP buffer. | `cleared` |
 
-Both teach commands **report the fit residual / solved values** and **persist on
-success** (mirroring how `define_frame` computes-and-commits), echoing the solved
-pose so the caller can see exactly what was written before trusting it. The RMS
-residual on `teach_tcp_position` is the "TCP error" figure a real pendant shows —
-the trust signal that the touches consistently hit one point.
+`teach_tcp_position` **reports the RMS fit residual** — the "TCP error" figure a
+real pendant shows, the trust signal that the touches consistently hit one point
+— and **persists on success** (mirroring how `define_frame` computes-and-commits),
+echoing the solved offset so the caller can see exactly what was written before
+trusting it. `teach_tcp_orientation` takes an explicit rotation rather than
+capturing points, because tool orientation cannot be derived from tip touches
+(see the note under Purpose). Because it writes only the rotation, it must be
+run *after* `teach_tcp_position` (or alongside a previously-taught tip), never on
+an untaught tool.
 
 ## Computation
 
 New solver in the `frames/` package alongside `compute.go`:
 
 - `ComputePivotTCP(poses []spatialmath.Pose) (offset r3.Vector, residualRMS float64, err error)` —
-  stacks the pivot constraints (each pair `(R_i − R_j)·t = p_j − p_i`), solves
-  the least-squares system for the tool tip offset `t` in the flange frame, and
-  returns the RMS residual of the fit. Guards against degenerate input (too few
-  points, near-parallel orientations).
-- An orientation helper that reuses the existing cross-product /
-  orthonormalization path from `compute.go`, applied to the two axis-point
-  displacement vectors in flange coordinates.
+  builds the linear system where each capture contributes
+  `[R_i | -I]·[t; c] = -p_i` (unknowns: tool tip `t` in the flange frame and the
+  common touched point `c` in the arm base frame), solves it in the
+  least-squares sense, and returns `t` plus the RMS residual of the fit. Requires
+  `≥4` captures and guards against degenerate input (too few points,
+  near-parallel orientations that leave the system rank-deficient).
 
-Tested to the same standard as `compute_test.go`: known-geometry fixtures with
-an analytically known tip/orientation, plus degenerate / collinear guards.
+Orientation needs no solver: it is either identity (default) or an explicit
+rotation supplied by the operator and persisted verbatim.
+
+Tested to the same standard as `compute_test.go`: known-geometry fixtures with an
+analytically known tip (e.g. synthesize flange poses that all place a chosen tip
+at a fixed base point, assert the solver recovers it with ~0 residual), plus
+degenerate-input guards.
 
 ## Persistence
 
