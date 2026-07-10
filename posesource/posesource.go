@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/services/motion"
 	"go.viam.com/rdk/spatialmath"
@@ -48,4 +49,36 @@ func (f *Fake) Capture(_ context.Context) (*referenceframe.PoseInFrame, error) {
 	p := f.Poses[f.idx]
 	f.idx++
 	return referenceframe.NewPoseInFrame(referenceframe.World, p), nil
+}
+
+// FlangeSource reads the arm flange pose (end position in the arm base frame).
+type FlangeSource interface {
+	CaptureFlange(ctx context.Context) (spatialmath.Pose, error)
+}
+
+// ArmSource wraps an arm's EndPosition call.
+type ArmSource struct {
+	Arm arm.Arm
+}
+
+// CaptureFlange returns the arm's current end position (flange pose in the arm
+// base frame).
+func (a *ArmSource) CaptureFlange(ctx context.Context) (spatialmath.Pose, error) {
+	return a.Arm.EndPosition(ctx, nil)
+}
+
+// FakeFlange returns queued poses, popping one per call. For tests.
+type FakeFlange struct {
+	Poses []spatialmath.Pose
+	idx   int
+}
+
+// CaptureFlange returns the next queued flange pose.
+func (f *FakeFlange) CaptureFlange(_ context.Context) (spatialmath.Pose, error) {
+	if f.idx >= len(f.Poses) {
+		return nil, errors.New("fake: no more queued flange poses")
+	}
+	p := f.Poses[f.idx]
+	f.idx++
+	return p, nil
 }
