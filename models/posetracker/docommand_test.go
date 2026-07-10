@@ -3,10 +3,13 @@ package posetracker
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
+	"go.viam.com/rdk/testutils/inject"
 	"go.viam.com/test"
 
 	tfconfig "github.com/viam-labs/teach-frames/config"
@@ -704,4 +707,29 @@ func TestTeachTCPOrientationNoArm(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, fake.SavedComponent, test.ShouldEqual, "") // nothing persisted
+}
+
+// --- get_arm_state tests ---
+
+func TestGetArmState(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil) // arm not configured
+
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}), nil
+	}
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return []referenceframe.Input{0, math.Pi / 2}, nil
+	}
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	pose := resp["pose"].(map[string]interface{})
+	test.That(t, pose["x"], test.ShouldAlmostEqual, 1.0)
+	joints := resp["joints"].([]float64)
+	test.That(t, joints[0], test.ShouldAlmostEqual, 0.0)
+	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0) // radians→degrees
 }

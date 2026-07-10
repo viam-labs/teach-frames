@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
+	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
 
 	"github.com/viam-labs/teach-frames/config"
@@ -102,6 +104,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "teach_tcp_orientation"):
 		return pt.teachTCPOrientation(ctx, cmd["teach_tcp_orientation"])
+
+	case has(cmd, "get_arm_state"):
+		return pt.getArmState(ctx)
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -381,6 +386,34 @@ func keysOf(m map[string]interface{}) []string {
 		ks = append(ks, k)
 	}
 	return ks
+}
+
+// getArmState returns the current TCP pose and joint positions (degrees) for the UI.
+func (pt *teachTracker) getArmState(ctx context.Context) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot read arm state")
+	}
+	pose, err := pt.arm.EndPosition(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	joints, err := pt.arm.JointPositions(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"pose":   poseToMap(pose),
+		"joints": inputsToDegrees(joints),
+	}, nil
+}
+
+// inputsToDegrees converts joint inputs (radians) to a plain []float64 in degrees.
+func inputsToDegrees(inputs []referenceframe.Input) []float64 {
+	out := make([]float64, len(inputs))
+	for i, in := range inputs {
+		out[i] = float64(in) * 180.0 / math.Pi
+	}
+	return out
 }
 
 // poseToMap converts a spatialmath.Pose to a plain map for DoCommand responses.
