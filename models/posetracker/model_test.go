@@ -248,6 +248,8 @@ func TestNewPoseTrackerArmUnresolvableWarnsAndContinues(t *testing.T) {
 	tt := res.(*teachTracker)
 	test.That(t, tt.armName, test.ShouldEqual, "my-arm")
 	test.That(t, tt.flange, test.ShouldBeNil)
+	// Jog handlers rely on pt.arm being nil when the arm does not resolve.
+	test.That(t, tt.arm, test.ShouldBeNil)
 }
 
 // TestNewPoseTrackerWithArmStoresArm verifies the raw arm is retained for jogging.
