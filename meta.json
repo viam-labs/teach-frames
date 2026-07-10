@@ -1,6 +1,6 @@
 {
   "module_id": "viam-labs:teach-frames",
-  "visibility": "private",
+  "visibility": "public",
   "url": "https://github.com/viam-labs/teach-frames",
   "description": "Teach arbitrary workcell frames by jogging an arm; mirror to world_state_store for visualization.",
   "models": [
