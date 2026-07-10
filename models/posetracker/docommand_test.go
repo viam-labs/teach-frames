@@ -586,6 +586,10 @@ func TestTeachTCPPositionPersistsTranslation(t *testing.T) {
 	test.That(t, fake.SavedComponent, test.ShouldEqual, "tool")
 	test.That(t, fake.SavedParent, test.ShouldEqual, "my-arm")
 	test.That(t, fake.SavedTranslation, test.ShouldNotBeNil)
+	// The persisted translation must be the SOLVED tip, not the common touched
+	// point, a zero vector, or the RHS — proves teachTCPPosition plumbs the
+	// pivot solution through to persistence.
+	test.That(t, spatialmath.R3VectorAlmostEqual(*fake.SavedTranslation, tip, 1e-6), test.ShouldBeTrue)
 	test.That(t, pt.store.TCPBufferLen(), test.ShouldEqual, 0) // cleared on success
 
 	residual, ok := resp["residual_rms"].(float64)
