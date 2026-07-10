@@ -3,6 +3,8 @@ package persist
 import (
 	"testing"
 
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
 
 	"github.com/viam-labs/teach-frames/config"
@@ -306,4 +308,56 @@ func TestSetComponentFrames_EmptyFramesAllowed(t *testing.T) {
 	framesRaw, ok := attrs["frames"].([]interface{})
 	test.That(t, ok, test.ShouldBeTrue)
 	test.That(t, len(framesRaw), test.ShouldEqual, 0)
+}
+
+func TestSetComponentFrameTranslationAndOrientation(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{"name": "tool", "attributes": map[string]interface{}{}},
+		},
+	}
+	tr := &r3.Vector{X: 10, Y: -5, Z: 120}
+	ov := &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 45}
+
+	out, err := setComponentFrame(cfg, "tool", "my-arm", tr, ov)
+	test.That(t, err, test.ShouldBeNil)
+
+	comp := out["components"].([]interface{})[0].(map[string]interface{})
+	frame := comp["frame"].(map[string]interface{})
+	test.That(t, frame["parent"], test.ShouldEqual, "my-arm")
+	transl := frame["translation"].(map[string]interface{})
+	test.That(t, transl["x"], test.ShouldEqual, 10.0)
+	test.That(t, transl["z"], test.ShouldEqual, 120.0)
+	orient := frame["orientation"].(map[string]interface{})
+	test.That(t, orient["type"], test.ShouldEqual, "ov_degrees")
+
+	// Original config is not mutated.
+	origComp := cfg["components"].([]interface{})[0].(map[string]interface{})
+	_, hadFrame := origComp["frame"]
+	test.That(t, hadFrame, test.ShouldBeFalse)
+}
+
+func TestSetComponentFrameMissingComponent(t *testing.T) {
+	cfg := map[string]interface{}{"components": []interface{}{}}
+	_, err := setComponentFrame(cfg, "nope", "arm", &r3.Vector{}, nil)
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestSetComponentFramePreservesExistingParentAndGeometry(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{
+				"name": "tool",
+				"frame": map[string]interface{}{
+					"parent":   "existing-parent",
+					"geometry": map[string]interface{}{"type": "box"},
+				},
+			},
+		},
+	}
+	out, err := setComponentFrame(cfg, "tool", "my-arm", &r3.Vector{X: 1}, nil)
+	test.That(t, err, test.ShouldBeNil)
+	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
+	test.That(t, frame["parent"], test.ShouldEqual, "existing-parent") // preserved
+	test.That(t, frame["geometry"], test.ShouldNotBeNil)               // preserved
 }

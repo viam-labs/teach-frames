@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/app"
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/spatialmath"
 
 	"github.com/viam-labs/teach-frames/config"
 )
@@ -131,6 +133,116 @@ func setComponentFrames(
 
 	newConfig["components"] = newComponents
 	return newConfig, nil
+}
+
+// setComponentFrame returns a copy of robotConfig with the named component's
+// `frame.translation` and/or `frame.orientation` set. A nil translation or
+// orientation leaves that sub-field untouched. Existing frame keys (geometry, a
+// non-empty parent) are preserved; parent falls back to the provided value when
+// absent or empty. Like setComponentFrames, it does not mutate the input.
+func setComponentFrame(
+	robotConfig map[string]interface{},
+	componentName, parent string,
+	translation *r3.Vector,
+	orientation spatialmath.Orientation,
+) (map[string]interface{}, error) {
+	newConfig := make(map[string]interface{}, len(robotConfig))
+	for k, v := range robotConfig {
+		newConfig[k] = v
+	}
+
+	rawComponents, ok := newConfig["components"]
+	if !ok {
+		rawComponents = []interface{}{}
+	}
+	components, ok := rawComponents.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("robot config \"components\" is not a list")
+	}
+
+	found := false
+	newComponents := make([]interface{}, len(components))
+	for i, raw := range components {
+		comp, ok := raw.(map[string]interface{})
+		if !ok {
+			newComponents[i] = raw
+			continue
+		}
+		if name, _ := comp["name"].(string); name != componentName {
+			newComponents[i] = comp
+			continue
+		}
+
+		newComp := make(map[string]interface{}, len(comp)+1)
+		for k, v := range comp {
+			newComp[k] = v
+		}
+
+		frame := map[string]interface{}{}
+		if rawFrame, ok := newComp["frame"].(map[string]interface{}); ok {
+			for k, v := range rawFrame {
+				frame[k] = v
+			}
+		}
+		if existingParent, _ := frame["parent"].(string); existingParent == "" {
+			frame["parent"] = parent
+		}
+		if translation != nil {
+			frame["translation"] = map[string]interface{}{
+				"x": translation.X, "y": translation.Y, "z": translation.Z,
+			}
+		}
+		if orientation != nil {
+			ov := orientation.OrientationVectorDegrees()
+			frame["orientation"] = map[string]interface{}{
+				"type": "ov_degrees",
+				"value": map[string]interface{}{
+					"x": ov.OX, "y": ov.OY, "z": ov.OZ, "th": ov.Theta,
+				},
+			}
+		}
+		newComp["frame"] = frame
+		newComponents[i] = newComp
+		found = true
+	}
+	if !found {
+		return nil, fmt.Errorf("component %q not found in robot config", componentName)
+	}
+
+	newConfig["components"] = newComponents
+	return newConfig, nil
+}
+
+// SaveComponentFrame does a read-modify-write of the named component's frame
+// (translation and/or orientation) in the robot part config. A nil translation
+// or orientation leaves that sub-field unchanged. Needs a live cloud connection;
+// covered by the manual integration checklist, not unit tests.
+func (p *AppPersister) SaveComponentFrame(
+	ctx context.Context,
+	componentName, parent string,
+	translation *r3.Vector,
+	orientation spatialmath.Orientation,
+) error {
+	viamClient, err := app.CreateViamClientWithAPIKey(ctx, app.Options{}, p.apiKey, p.apiKeyID, p.logger)
+	if err != nil {
+		return fmt.Errorf("create viam client: %w", err)
+	}
+	defer viamClient.Close()
+
+	appClient := viamClient.AppClient()
+	part, _, err := appClient.GetRobotPart(ctx, p.partID)
+	if err != nil {
+		return fmt.Errorf("get robot part %s: %w", p.partID, err)
+	}
+
+	newConfig, err := setComponentFrame(part.RobotConfig, componentName, parent, translation, orientation)
+	if err != nil {
+		return fmt.Errorf("patch frame for component %q: %w", componentName, err)
+	}
+	if _, err := appClient.UpdateRobotPart(ctx, p.partID, part.Name, newConfig); err != nil {
+		return fmt.Errorf("update robot part %s: %w", p.partID, err)
+	}
+	return nil
 }
 
 // Save does a read-modify-write of this component's attributes.frames in the
