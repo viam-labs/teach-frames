@@ -635,6 +635,19 @@ func TestTeachTCPOrientationRejectsZeroVector(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
+func TestTeachTCPOrientationRejectsWrongTypedValue(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+	// A present-but-wrong-typed value on a real key (o_x as a string, not a
+	// number) must error rather than silently coercing to 0. o_z is a valid
+	// nonzero float here so the all-zero guard cannot mask the type error —
+	// without the type check this would silently persist the WRONG orientation.
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": "bad", "o_z": 1.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
 func TestTeachTCPOrientationPersistenceDisabled(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.persist = nil

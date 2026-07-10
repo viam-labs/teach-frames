@@ -25,7 +25,7 @@ import (
 //	{"delete_frame": {"name": "<n>"}}                        — remove a single named frame and persist the updated set.
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
 //	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
-//	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact.
+//	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact. Run after teach_tcp_position, since it writes orientation only and does not re-derive the translation.
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -311,17 +311,45 @@ func (pt *teachTracker) teachTCPOrientation(ctx context.Context, raw interface{}
 		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP orientation")
 	}
 
-	num := func(k string) float64 {
-		if v, ok := args[k].(float64); ok {
-			return v
+	// num reads an optional numeric key: a MISSING key defaults to 0, but a key
+	// that is PRESENT with a non-float64 value is a typo/type error and must
+	// surface rather than silently coercing to 0 (which could persist the wrong
+	// orientation). A mistyped key NAME is indistinguishable from a missing key
+	// and cannot be caught here.
+	num := func(k string) (float64, error) {
+		v, present := args[k]
+		if !present {
+			return 0, nil
 		}
-		return 0
+		f, ok := v.(float64)
+		if !ok {
+			return 0, fmt.Errorf("%s must be a number", k)
+		}
+		return f, nil
 	}
-	ov := &spatialmath.OrientationVectorDegrees{OX: num("o_x"), OY: num("o_y"), OZ: num("o_z"), Theta: num("theta")}
+	ox, err := num("o_x")
+	if err != nil {
+		return nil, err
+	}
+	oy, err := num("o_y")
+	if err != nil {
+		return nil, err
+	}
+	oz, err := num("o_z")
+	if err != nil {
+		return nil, err
+	}
+	theta, err := num("theta")
+	if err != nil {
+		return nil, err
+	}
+	ov := &spatialmath.OrientationVectorDegrees{OX: ox, OY: oy, OZ: oz, Theta: theta}
 	if ov.OX == 0 && ov.OY == 0 && ov.OZ == 0 {
 		return nil, errors.New("orientation vector (o_x,o_y,o_z) must be non-zero")
 	}
 
+	// commitMu serializes this persist against concurrent teach/define commits on
+	// the same tcp_component frame so the persisted state stays consistent.
 	pt.commitMu.Lock()
 	defer pt.commitMu.Unlock()
 
