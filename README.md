@@ -231,6 +231,60 @@ The app-API persistence path requires a live cloud connection and has no unit te
 7. **Verify visualization.** Open the Viam visualization panel. Confirm an axes triad labeled `fixture_a` appears at the expected location in the scene.
 8. **Restart the machine.** Restart viam-server (or reload the module). Confirm `{"list_frames": {}}` still returns `fixture_a` — i.e. the frame was reloaded from config on startup.
 
+## Teach Pendant application
+
+This module ships a browser-based **teach pendant** as a Viam Application — a
+static web UI, registered in `meta.json` under `applications` (type
+`single_machine`), that Viam hosts and opens in the context of one machine. It
+is a full pendant: jog the arm, capture points, define frames, and run TCP
+teaching from a single screen. Everything the UI does goes through the
+pose-tracker's DoCommands (jogging included), so it needs no extra configuration
+beyond the `pose-tracker` component — set its optional `arm` attribute to enable
+the jog and TCP-teaching controls.
+
+The app source lives in `frontend/` (Svelte 5 + Vite, built with
+[`@viamrobotics/svelte-sdk`](https://github.com/viamrobotics/viam-svelte-sdk)).
+`make module` builds it (`frontend/dist/`) and bundles it into the module
+tarball.
+
+### v1 scope
+
+Numeric readouts only — live TCP pose and joint angles, capture-buffer and
+frame tables. There is no in-app 3D scene or camera feed in v1; use the Viam
+visualizer (fed by the companion `world-state-store` service) to see taught
+frames as axes triads. Jogging is discrete (world-frame translation, tool-frame
+rotation), with a step-size selector and an always-available **Stop**.
+
+### Local development
+
+`viam module local-app-testing` proxies your local dev server and injects the
+same machine-credential cookie that the hosted platform provides in production —
+so there is a single connection code path.
+
+```sh
+# 1. Run the app's dev server (Vite, defaults to :5173)
+cd frontend && npm install && npm run dev
+
+# 2. In another shell, from a logged-in CLI session, proxy + inject the cookie:
+viam login
+viam module local-app-testing \
+  --app-url http://localhost:5173 \
+  --machine-id YOUR-MACHINE-ID
+```
+
+The CLI opens `http://localhost:8012/start`, sets the machine cookie, and
+redirects to the proxied app. `--machine-id` (from the machine's Fleet page)
+selects single-machine mode.
+
+### Frontend checks
+
+```sh
+cd frontend
+npm run check   # svelte-check (types)
+npm test        # vitest unit tests (DoCommand payload builders)
+npm run build   # production build → frontend/dist/
+```
+
 ## Build and development
 
 ```sh
@@ -250,4 +304,4 @@ make module
 make clean
 ```
 
-`make module` produces `bin/module.tar.gz` containing `bin/teach-frames` and `meta.json`. The `bin/` directory is gitignored. Cross-compilation honors `VIAM_BUILD_OS`/`VIAM_BUILD_ARCH`, which the Viam build action sets automatically.
+`make module` builds the frontend (`make frontend`) and produces `bin/module.tar.gz` containing `bin/teach-frames`, `meta.json`, and `frontend/dist/` (the teach pendant application, whose `entrypoint` is `frontend/dist/index.html`). The `bin/` directory is gitignored. Cross-compilation honors `VIAM_BUILD_OS`/`VIAM_BUILD_ARCH`, which the Viam build action sets automatically.
