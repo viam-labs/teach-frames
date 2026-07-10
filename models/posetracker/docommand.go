@@ -24,6 +24,7 @@ import (
 //	{"list_frames": {}}                                      — return all currently committed frames.
 //	{"delete_frame": {"name": "<n>"}}                        — remove a single named frame and persist the updated set.
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
+//	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -94,6 +95,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "clear_frames"):
 		return pt.clearFrames(ctx)
+
+	case has(cmd, "teach_tcp_position"):
+		return pt.teachTCPPosition(ctx)
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -257,6 +261,38 @@ func (pt *teachTracker) saveFrames(ctx context.Context) error {
 		specs = append(specs, config.FrameSpecFromPose(n, "", pif.Parent(), pif.Pose()))
 	}
 	return pt.persist.Save(ctx, specs)
+}
+
+// teachTCPPosition solves the pivot over the TCP capture buffer, persists the
+// resolved tool tip as the tcp_component's frame translation (parent = arm),
+// and clears the TCP buffer on success.
+func (pt *teachTracker) teachTCPPosition(ctx context.Context) (map[string]interface{}, error) {
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP")
+	}
+
+	buf := pt.store.TCPBuffer()
+	offset, residual, err := frames.ComputePivotTCP(buf)
+	if err != nil {
+		return nil, fmt.Errorf("pivot solve failed: %w", err)
+	}
+
+	// commitMu serializes this persist against concurrent define/delete/clear/teach
+	// commits so the persisted state stays consistent.
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	off := offset
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.tcpComponent, pt.armName, &off, nil); perr != nil {
+		return nil, fmt.Errorf("persist failed, TCP not committed: %w", perr)
+	}
+
+	pt.store.ClearTCPBuffer()
+	return map[string]interface{}{
+		"committed":    true,
+		"offset":       map[string]interface{}{"x": offset.X, "y": offset.Y, "z": offset.Z},
+		"residual_rms": residual,
+	}, nil
 }
 
 // has reports whether key k is present in m.
