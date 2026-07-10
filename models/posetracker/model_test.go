@@ -153,3 +153,41 @@ func TestNewPoseTrackerConstructor(t *testing.T) {
 	_, ok := poses["valid-frame"]
 	test.That(t, ok, test.ShouldBeTrue)
 }
+
+func TestValidateDeclaresArmDependency(t *testing.T) {
+	cfg := &Config{TCPComponent: "tool", Arm: "my-arm"}
+	req, _, err := cfg.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, req, test.ShouldContain, "my-arm")
+}
+
+func TestValidateNoArmIsValid(t *testing.T) {
+	cfg := &Config{TCPComponent: "tool"}
+	req, _, err := cfg.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	// motion service dep present, arm absent.
+	test.That(t, req, test.ShouldNotContain, "")
+}
+
+// TestNewPoseTrackerNoArmLeavesFlangeNil verifies that when the "arm" config
+// attribute is omitted, TCP teaching stays disabled: the constructor still
+// succeeds (arm is optional) but pt.flange remains nil.
+func TestNewPoseTrackerNoArmLeavesFlangeNil(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{motionName: injectmotion.NewMotionService(defaultMotionService)}
+
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "arm"}, // Arm intentionally omitted
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+
+	tt := res.(*teachTracker)
+	test.That(t, tt.flange, test.ShouldBeNil)
+	test.That(t, tt.armName, test.ShouldEqual, "")
+	test.That(t, tt.tcpComponent, test.ShouldEqual, "arm")
+}
