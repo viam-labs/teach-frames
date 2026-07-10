@@ -165,3 +165,24 @@ func TestBufferReturnsCopy(t *testing.T) {
 	internal := s.Buffer()
 	test.That(t, internal[0], test.ShouldNotBeNil)
 }
+
+func TestTCPBuffer(t *testing.T) {
+	s := New()
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 0)
+
+	p0 := spatialmath.NewZeroPose()
+	idx := s.AddTCPCapture(p0)
+	test.That(t, idx, test.ShouldEqual, 0)
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 1)
+
+	s.AddTCPCapture(spatialmath.NewZeroPose())
+	test.That(t, len(s.TCPBuffer()), test.ShouldEqual, 2)
+
+	// TCP buffer is independent of the frame buffer.
+	s.AddCapture(spatialmath.NewZeroPose())
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 2)
+	test.That(t, s.BufferLen(), test.ShouldEqual, 1)
+
+	test.That(t, s.ClearTCPBuffer(), test.ShouldEqual, 2)
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 0)
+}
