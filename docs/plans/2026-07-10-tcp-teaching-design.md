@@ -155,3 +155,35 @@ frame persistence is unchanged.
 - **Degenerate touches** (too few points, near-parallel orientations, collinear
   axis points) → solver returns a descriptive error; buffer is preserved so the
   operator can add more points rather than start over.
+
+## Integration verification (pending, drafted 2026-07-10)
+
+Implementation, `go vet`, and the full unit test suite are complete and green
+(see the Task 9 build/test run). The steps below require a real arm + tool
+component and live cloud credentials, which are not available in this
+environment. They are recorded here as a **pending** checklist for a human
+operator to run and check off; they directly resolve the two open risks above
+("Frame-parent semantics" and "`EndPosition` and existing tool offset").
+
+- [ ] **1. Baseline pivot teach.** Configure the tool as `tcp_component`, the
+      arm as `arm`. Jog the tip to a fixed point from ≥4 varied orientations,
+      `capture_tcp_point` each, then `teach_tcp_position`. Confirm
+      `residual_rms` is small (e.g. < 1–2 mm for careful touches).
+- [ ] **2. Frame-parent semantics (open risk).** After teaching, inspect the
+      tool component's `frame` in the app config and verify in the visualizer
+      that the tool tip now renders at the correct physical location. If the
+      tip renders relative to the arm *base* instead of the *flange*, the
+      solved offset needs transforming before persistence — record the
+      correction and open a follow-up.
+- [ ] **3. Existing tool offset (open risk).** Repeat teaching on a tool that
+      already has a non-zero `frame`. Confirm `arm.EndPosition` returns the
+      flange pose *without* folding in the tool offset (i.e. re-teaching
+      converges to the same physical tip, not a doubled offset). If it
+      double-counts, document that the tool `frame` must be cleared before
+      re-teaching.
+- [ ] **4. Orientation-only write.** `teach_tcp_orientation` with a known
+      rotation; confirm it writes `frame.orientation` and leaves `translation`
+      unchanged.
+
+Results (pass/fail, measured residuals, any corrections needed) should be
+recorded under this heading once the checklist is run.
