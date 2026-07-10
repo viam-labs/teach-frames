@@ -1,0 +1,34 @@
+{
+  "module_id": "viam-labs:teach-frames",
+  "visibility": "private",
+  "url": "https://github.com/viam-labs/teach-frames",
+  "description": "Teach arbitrary workcell frames by jogging an arm; mirror to world_state_store for visualization.",
+  "models": [
+    {
+      "api": "rdk:component:pose_tracker",
+      "model": "viam-labs:teach-frames:pose-tracker",
+      "markdown_link": "README.md#viam-labsteach-framespose-tracker-rdkcomponentpose_tracker",
+      "short_description": "Teach workcell frames by jogging an arm; exposes and persists them via the PoseTracker API."
+    },
+    {
+      "api": "rdk:service:world_state_store",
+      "model": "viam-labs:teach-frames:world-state-store",
+      "markdown_link": "README.md#viam-labsteach-framesworld-state-store-rdkserviceworld_state_store",
+      "short_description": "Mirrors the pose-tracker's taught frames into the Viam visualizer as axes triads."
+    }
+  ],
+  "entrypoint": "bin/teach-frames",
+  "build": {
+    "build": "make module",
+    "path": "bin/module.tar.gz",
+    "arch": [
+      "darwin/arm64",
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "darwin_deps": [
+      "nlopt-static",
+      "go"
+    ]
+  }
+}

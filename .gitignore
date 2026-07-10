@@ -1,0 +1,5 @@
+/bin/
+/teach-frames
+*.tar.gz
+.env
+/examples/
