@@ -30,6 +30,7 @@ import (
 //	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact. Run after teach_tcp_position, since it writes orientation only and does not re-derive the translation.
 //	{"get_arm_state": {}}                                    — return the current TCP pose and joint positions (degrees) in one call, for the UI poll loop (errors if no arm is configured).
 //	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
+//	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -118,6 +119,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 			return nil, err
 		}
 		return map[string]interface{}{"stopped": true}, nil
+
+	case has(cmd, "jog_joint"):
+		return pt.jogJoint(ctx, cmd["jog_joint"])
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -416,6 +420,42 @@ func (pt *teachTracker) getArmState(ctx context.Context) (map[string]interface{}
 		"pose":   poseToMap(pose),
 		"joints": inputsToDegrees(joints),
 	}, nil
+}
+
+// jogJoint nudges a single joint by a signed step (degrees) and moves the arm there.
+func (pt *teachTracker) jogJoint(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot jog")
+	}
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("jog_joint args must be an object")
+	}
+	jointF, ok := args["joint"].(float64)
+	if !ok {
+		return nil, errors.New("jog_joint requires a numeric 'joint' index")
+	}
+	step, ok := args["step"].(float64)
+	if !ok {
+		return nil, errors.New("jog_joint requires a numeric 'step' (degrees)")
+	}
+	joint := int(jointF)
+
+	cur, err := pt.arm.JointPositions(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if joint < 0 || joint >= len(cur) {
+		return nil, fmt.Errorf("joint index %d out of range [0,%d)", joint, len(cur))
+	}
+	next := make([]referenceframe.Input, len(cur))
+	copy(next, cur)
+	next[joint] = cur[joint] + step*math.Pi/180.0 // Input is a float64 alias (radians)
+
+	if err := pt.arm.MoveToJointPositions(ctx, next, nil); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"joints": inputsToDegrees(next)}, nil
 }
 
 // inputsToDegrees converts joint inputs (radians) to a plain []float64 in degrees.

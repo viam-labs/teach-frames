@@ -754,3 +754,44 @@ func TestStopArmNoArm(t *testing.T) {
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"stop_arm": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
 }
+
+// --- jog_joint tests ---
+
+func TestJogJoint(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	start := []referenceframe.Input{0, 0, 0}
+	var moved []referenceframe.Input
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return start, nil
+	}
+	injArm.MoveToJointPositionsFunc = func(_ context.Context, p []referenceframe.Input, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	// jog joint 1 by +90 degrees
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_joint": map[string]interface{}{"joint": 1.0, "step": 90.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved[1], test.ShouldAlmostEqual, math.Pi/2) // +90deg in radians
+	test.That(t, moved[0], test.ShouldAlmostEqual, 0.0)
+	joints := resp["joints"].([]float64)
+	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0)
+
+	// out-of-range joint index errors
+	_, err = pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_joint": map[string]interface{}{"joint": 9.0, "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestJogJointNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_joint": map[string]interface{}{"joint": 0.0, "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
