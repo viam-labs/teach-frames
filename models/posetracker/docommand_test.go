@@ -733,3 +733,24 @@ func TestGetArmState(t *testing.T) {
 	test.That(t, joints[0], test.ShouldAlmostEqual, 0.0)
 	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0) // radians→degrees
 }
+
+// --- stop_arm tests ---
+
+func TestStopArm(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	stopped := false
+	injArm.StopFunc = func(context.Context, map[string]interface{}) error { stopped = true; return nil }
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"stop_arm": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["stopped"], test.ShouldBeTrue)
+	test.That(t, stopped, test.ShouldBeTrue)
+}
+
+func TestStopArmNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"stop_arm": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}

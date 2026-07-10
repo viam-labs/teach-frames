@@ -28,6 +28,8 @@ import (
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
 //	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
 //	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact. Run after teach_tcp_position, since it writes orientation only and does not re-derive the translation.
+//	{"get_arm_state": {}}                                    — return the current TCP pose and joint positions (degrees) in one call, for the UI poll loop (errors if no arm is configured).
+//	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -107,6 +109,15 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "get_arm_state"):
 		return pt.getArmState(ctx)
+
+	case has(cmd, "stop_arm"):
+		if pt.arm == nil {
+			return nil, errors.New("arm dependency not configured; cannot stop arm")
+		}
+		if err := pt.arm.Stop(ctx, nil); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"stopped": true}, nil
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
