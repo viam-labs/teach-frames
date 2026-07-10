@@ -25,6 +25,7 @@ import (
 //	{"delete_frame": {"name": "<n>"}}                        — remove a single named frame and persist the updated set.
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
 //	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
+//	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact.
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -98,6 +99,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "teach_tcp_position"):
 		return pt.teachTCPPosition(ctx)
+
+	case has(cmd, "teach_tcp_orientation"):
+		return pt.teachTCPOrientation(ctx, cmd["teach_tcp_orientation"])
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -292,6 +296,41 @@ func (pt *teachTracker) teachTCPPosition(ctx context.Context) (map[string]interf
 		"committed":    true,
 		"offset":       map[string]interface{}{"x": offset.X, "y": offset.Y, "z": offset.Z},
 		"residual_rms": residual,
+	}, nil
+}
+
+// teachTCPOrientation persists an explicit tool orientation (OV degrees) to the
+// tcp_component's frame, leaving the taught translation intact. Tool orientation
+// cannot be derived from tip touches, so it is supplied by the operator.
+func (pt *teachTracker) teachTCPOrientation(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("teach_tcp_orientation args must be an object")
+	}
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP orientation")
+	}
+
+	num := func(k string) float64 {
+		if v, ok := args[k].(float64); ok {
+			return v
+		}
+		return 0
+	}
+	ov := &spatialmath.OrientationVectorDegrees{OX: num("o_x"), OY: num("o_y"), OZ: num("o_z"), Theta: num("theta")}
+	if ov.OX == 0 && ov.OY == 0 && ov.OZ == 0 {
+		return nil, errors.New("orientation vector (o_x,o_y,o_z) must be non-zero")
+	}
+
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.tcpComponent, pt.armName, nil, ov); perr != nil {
+		return nil, fmt.Errorf("persist failed, TCP orientation not committed: %w", perr)
+	}
+	return map[string]interface{}{
+		"committed":   true,
+		"orientation": map[string]interface{}{"o_x": ov.OX, "o_y": ov.OY, "o_z": ov.OZ, "theta": ov.Theta},
 	}, nil
 }
 

@@ -607,3 +607,39 @@ func TestTeachTCPPositionPersistenceDisabled(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, pt.store.TCPBufferLen(), test.ShouldEqual, 4) // buffer preserved on failure
 }
+
+// --- teach_tcp_orientation tests ---
+
+func TestTeachTCPOrientationPersistsOrientation(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "my-arm"
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 45.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["committed"], test.ShouldEqual, true)
+	test.That(t, fake.SavedOrientation, test.ShouldNotBeNil)
+	test.That(t, fake.SavedTranslation, test.ShouldBeNil) // translation untouched
+}
+
+func TestTeachTCPOrientationRejectsZeroVector(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 0.0, "theta": 0.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestTeachTCPOrientationPersistenceDisabled(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 45.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
