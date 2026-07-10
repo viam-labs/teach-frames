@@ -60,6 +60,10 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 | `teach_tcp_orientation` | `{"o_x": <n>, "o_y": <n>, "o_z": <n>, "theta": <n>}` | Persists an explicit tool orientation (orientation-vector degrees) to `tcp_component.frame.orientation`, leaving the taught translation unchanged. Rejects an all-zero `(o_x, o_y, o_z)` vector. Requires platform-API creds. | `committed` (bool), `orientation` (o_x/o_y/o_z/theta) |
 | `get_tcp_buffer` | `{}` | Returns all poses currently in the TCP capture buffer. | `points` (array of pose maps) |
 | `clear_tcp_buffer` | `{}` | Empties the TCP capture buffer. | `cleared` (count removed) |
+| `get_arm_state` | `{}` | Reads the current TCP pose and joint positions in a single call (for a UI poll loop). Errors if no `arm` is configured. | `pose` (x/y/z/o_x/o_y/o_z/theta), `joints` (array of degrees) |
+| `jog_cartesian` | `{"axis": "x"\|"y"\|"z"\|"roll"\|"pitch"\|"yaw", "step": <mm-or-deg>}` | Nudges the TCP by a signed step: `x`/`y`/`z` translate along the **world** frame (mm); `roll`/`pitch`/`yaw` rotate about the **tool** frame (degrees). Reads `EndPosition`, applies the delta, and calls `MoveToPosition`. Errors if no `arm` is configured or the axis is unknown. | `pose` (resulting TCP pose), `moved` (bool) |
+| `jog_joint` | `{"joint": <index>, "step": <deg>}` | Nudges a single joint by a signed step (degrees) and calls `MoveToJointPositions`. Errors if no `arm` is configured or the joint index is out of range. | `joints` (resulting positions, degrees) |
+| `stop_arm` | `{}` | Stops arm motion immediately (`arm.Stop`). Errors if no `arm` is configured. | `stopped` (bool) |
 
 ### `define_frame` methods
 
@@ -76,6 +80,34 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 {"capture_point": {}}
 {"capture_point": {}}
 {"define_frame": {"name": "fixture_a", "method": "3point"}}
+```
+
+### Jogging
+
+The `jog_cartesian`, `jog_joint`, `stop_arm`, and `get_arm_state` commands drive
+the arm named by the optional `arm` config attribute — the same dependency TCP
+teaching uses. Without it, these commands return an "arm dependency not
+configured" error.
+
+Jogging is **discrete**: each command applies exactly one signed step and blocks
+until the move completes; the `step` value carries its own sign (send a negative
+`step` to move the opposite direction). The frame convention is **world-frame
+translation, tool-frame rotation**:
+
+- `jog_cartesian` `x`/`y`/`z` translate the TCP along the world/base axes (mm).
+- `jog_cartesian` `roll`/`pitch`/`yaw` rotate about the TCP's own axes (degrees),
+  composed via quaternion math so the orientation stays well-formed.
+- `jog_joint` nudges one joint by a signed angle (degrees).
+
+The arm's own joint/reachability limits remain the safety authority — an
+unreachable or out-of-limit jog surfaces as the underlying `MoveToPosition` /
+`MoveToJointPositions` error. Use `stop_arm` to halt immediately.
+
+**Example — nudge +5 mm in world X, then rotate the tool −10° about its Z:**
+
+```json
+{"jog_cartesian": {"axis": "x", "step": 5}}
+{"jog_cartesian": {"axis": "yaw", "step": -10}}
 ```
 
 ### TCP teaching
