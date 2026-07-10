@@ -29,16 +29,20 @@ func ComputeThreePoint(p1, p2, p3 r3.Vector) (spatialmath.Pose, error) {
 	zHat := zAxis.Normalize()
 	yHat := zHat.Cross(xHat) // right-handed
 
-	// NewRotationMatrix stores values row-major: m[3*r + c].
-	// Col(c) returns {mat[c], mat[3+c], mat[6+c]}, so to set Col(0)=xHat,
-	// Col(1)=yHat, Col(2)=zHat we lay out rows as [xHat yHat zHat] transposed:
-	//   row 0: xHat.X, yHat.X, zHat.X
-	//   row 1: xHat.Y, yHat.Y, zHat.Y
-	//   row 2: xHat.Z, yHat.Z, zHat.Z
+	// The stored matrix must be laid out so that spatialmath.Compose maps the
+	// frame's local +X/+Y/+Z onto xHat/yHat/zHat in the parent. Compose (and the
+	// whole quaternion-based motion/visualization stack) applies the TRANSPOSE of
+	// the matrix that RotationMatrix.Col()/Mul() read back, so the basis vectors
+	// go in as ROWS here, not columns: with rows = [xHat; yHat; zHat], Compose
+	// applies the transpose (columns xHat/yHat/zHat) and rotates local axes to the
+	// intended world axes. TestComputeThreePointComposition is the regression guard.
+	//   row 0: xHat.X, xHat.Y, xHat.Z
+	//   row 1: yHat.X, yHat.Y, yHat.Z
+	//   row 2: zHat.X, zHat.Y, zHat.Z
 	rm, err := spatialmath.NewRotationMatrix([]float64{
-		xHat.X, yHat.X, zHat.X,
-		xHat.Y, yHat.Y, zHat.Y,
-		xHat.Z, yHat.Z, zHat.Z,
+		xHat.X, xHat.Y, xHat.Z,
+		yHat.X, yHat.Y, yHat.Z,
+		zHat.X, zHat.Y, zHat.Z,
 	})
 	if err != nil {
 		return nil, err

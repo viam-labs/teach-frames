@@ -54,18 +54,43 @@ func TestComputeThreePointGeneralOrthonormal(t *testing.T) {
 	// Right-handed: Col(0) x Col(1) must equal Col(2).
 	test.That(t, spatialmath.R3VectorAlmostEqual(col0.Cross(col1), col2, 1e-6), test.ShouldBeTrue)
 
-	// X̂ must equal norm(p2-p1) = {0.6, 0.8, 0}.
-	xHat := p2.Sub(p1).Normalize()
-	test.That(t, spatialmath.R3VectorAlmostEqual(col0, xHat, 1e-6), test.ShouldBeTrue)
+	// NOTE: this test intentionally asserts only orthonormality/handedness — all
+	// convention-independent properties of the stored matrix. It does NOT assert
+	// which physical direction each column points, because Col() reads the raw
+	// row-major storage, which is the TRANSPOSE of how the pose actually composes.
+	// Directional correctness (local axes -> intended world axes) is verified via
+	// spatialmath.Compose in TestComputeThreePointComposition.
+}
 
-	// Ŷ must equal zHat.Cross(xHat) (right-handed), NOT xHat.Cross(zHat) (left-handed).
-	// For this fixture zHat = norm(xHat x inPlane) where inPlane = p3-p1 = {0,0,1}.
-	// xHat x {0,0,1} = {0*1-0*0, 0*0-0.6*1, 0.6*0-0*0} ... computed below symbolically.
-	// We derive the expected yHat the same way compute.go does and check equality.
-	inPlane := p3.Sub(p1)
-	zHat := xHat.Cross(inPlane).Normalize()
+// TestComputeThreePointComposition is the acid test the suite previously lacked:
+// it composes points expressed in the taught frame's LOCAL coordinates into the
+// parent frame via spatialmath.Compose — exactly what the frame system, motion
+// planner, and world_state_store visualizer do — and asserts the taught frame's
+// local axes land on the physically intended xHat/yHat/zHat. Asserting on
+// rm.Col(c) (as the other tests do) checks the matrix that was built, not how it
+// actually composes, and hid a transposed-orientation bug: Compose applies the
+// transpose of the Col()/Mul() convention.
+func TestComputeThreePointComposition(t *testing.T) {
+	// Non-axis-aligned frame: origin p1, +X toward p2, p3 fixes the +XY plane.
+	p1 := r3.Vector{X: 0, Y: 0, Z: 0}
+	p2 := r3.Vector{X: 3, Y: 4, Z: 0}
+	p3 := r3.Vector{X: 0, Y: 0, Z: 1}
+
+	pose, err := ComputeThreePoint(p1, p2, p3)
+	test.That(t, err, test.ShouldBeNil)
+
+	// Reconstruct the intended basis the same way compute.go does.
+	xHat := p2.Sub(p1).Normalize()
+	zHat := xHat.Cross(p3.Sub(p1)).Normalize()
 	yHat := zHat.Cross(xHat)
-	test.That(t, spatialmath.R3VectorAlmostEqual(col1, yHat, 1e-6), test.ShouldBeTrue)
+
+	// Compose local unit axes into the parent frame and compare to the intended basis.
+	composeLocal := func(local r3.Vector) r3.Vector {
+		return spatialmath.Compose(pose, spatialmath.NewPoseFromPoint(local)).Point().Sub(p1)
+	}
+	test.That(t, spatialmath.R3VectorAlmostEqual(composeLocal(r3.Vector{X: 1}), xHat, 1e-9), test.ShouldBeTrue)
+	test.That(t, spatialmath.R3VectorAlmostEqual(composeLocal(r3.Vector{Y: 1}), yHat, 1e-9), test.ShouldBeTrue)
+	test.That(t, spatialmath.R3VectorAlmostEqual(composeLocal(r3.Vector{Z: 1}), zHat, 1e-9), test.ShouldBeTrue)
 }
 
 func TestComputeThreePointRejectsCollinear(t *testing.T) {
