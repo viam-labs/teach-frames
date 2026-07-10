@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/posetracker"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/referenceframe"
@@ -36,6 +37,7 @@ type Config struct {
 	MotionService    string               `json:"motion_service"`
 	TCPComponent     string               `json:"tcp_component"`
 	DestinationFrame string               `json:"destination_frame"`
+	Arm              string               `json:"arm"`
 	Frames           []tfconfig.FrameSpec `json:"frames"`
 }
 
@@ -45,7 +47,11 @@ func (c *Config) Validate(path string) ([]string, []string, error) {
 	if c.TCPComponent == "" {
 		return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "tcp_component")
 	}
-	return []string{c.motionServiceOrDefault()}, nil, nil
+	deps := []string{c.motionServiceOrDefault()}
+	if c.Arm != "" {
+		deps = append(deps, c.Arm)
+	}
+	return deps, nil, nil
 }
 
 // motionServiceOrDefault returns the configured motion service name, defaulting
@@ -67,6 +73,10 @@ type teachTracker struct {
 	source    posesource.PoseSource
 	persist   persist.ConfigPersister
 	destFrame string
+
+	flange       posesource.FlangeSource
+	tcpComponent string
+	armName      string
 
 	// commitMu serializes all config-persisting mutations (define/delete/clear) so
 	// the get→set→persist→rollback sequence remains atomic w.r.t. concurrent commits
@@ -104,6 +114,18 @@ func newPoseTracker(
 		store:     fs,
 		source:    &posesource.MotionSource{Motion: mot, Component: cfg.TCPComponent, DestFrame: dest},
 		destFrame: dest,
+	}
+
+	pt.tcpComponent = cfg.TCPComponent
+	pt.armName = cfg.Arm
+	if cfg.Arm != "" {
+		a, aerr := arm.FromDependencies(deps, cfg.Arm)
+		if aerr != nil {
+			// Declared dependency should resolve; warn and leave TCP teaching disabled.
+			logger.Warnw("TCP teaching disabled: arm dependency not resolvable", "arm", cfg.Arm, "err", aerr)
+		} else {
+			pt.flange = &posesource.ArmSource{Arm: a}
+		}
 	}
 
 	// Persistence: warn and continue if creds are absent; do not fail construction.

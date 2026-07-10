@@ -11,9 +11,10 @@ import (
 
 // FrameStore is the authoritative in-memory state, guarded by a mutex.
 type FrameStore struct {
-	mu     sync.RWMutex
-	frames map[string]*referenceframe.PoseInFrame
-	buffer []spatialmath.Pose
+	mu        sync.RWMutex
+	frames    map[string]*referenceframe.PoseInFrame
+	buffer    []spatialmath.Pose
+	tcpBuffer []spatialmath.Pose
 }
 
 // New returns an initialised, empty FrameStore.
@@ -51,6 +52,39 @@ func (s *FrameStore) ClearBuffer() int {
 	defer s.mu.Unlock()
 	n := len(s.buffer)
 	s.buffer = nil
+	return n
+}
+
+// AddTCPCapture appends a flange pose to the TCP capture buffer and returns its
+// zero-based index.
+func (s *FrameStore) AddTCPCapture(p spatialmath.Pose) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tcpBuffer = append(s.tcpBuffer, p)
+	return len(s.tcpBuffer) - 1
+}
+
+// TCPBuffer returns a shallow copy of the current TCP capture buffer.
+// Mutating the returned slice does not affect the store.
+func (s *FrameStore) TCPBuffer() []spatialmath.Pose {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]spatialmath.Pose(nil), s.tcpBuffer...)
+}
+
+// TCPBufferLen returns the number of poses in the TCP capture buffer.
+func (s *FrameStore) TCPBufferLen() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.tcpBuffer)
+}
+
+// ClearTCPBuffer discards all buffered flange poses and returns the count removed.
+func (s *FrameStore) ClearTCPBuffer() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.tcpBuffer)
+	s.tcpBuffer = nil
 	return n
 }
 

@@ -61,3 +61,20 @@ func TestMotionSourceEmptyDestFrameUsesWorld(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, capturedDest, test.ShouldEqual, referenceframe.World)
 }
+
+func TestFakeFlangeSource(t *testing.T) {
+	want := spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3})
+	f := &FakeFlange{Poses: []spatialmath.Pose{want}}
+
+	got, err := f.CaptureFlange(context.Background())
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, spatialmath.PoseAlmostEqual(got, want), test.ShouldBeTrue)
+
+	_, err = f.CaptureFlange(context.Background())
+	test.That(t, err, test.ShouldNotBeNil) // exhausted
+}
+
+func TestFlangeSourceImplementsInterface(t *testing.T) {
+	var _ FlangeSource = (*ArmSource)(nil)
+	var _ FlangeSource = (*FakeFlange)(nil)
+}

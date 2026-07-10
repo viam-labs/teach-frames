@@ -17,10 +17,15 @@ import (
 //	{"capture_point": {}}                                    — read the current TCP pose and append it to the capture buffer.
 //	{"get_buffer": {}}                                       — return all poses currently in the capture buffer.
 //	{"clear_buffer": {}}                                     — empty the capture buffer and return the count removed.
+//	{"capture_tcp_point": {}}                                — read the current arm flange pose and append it to the TCP capture buffer (errors if no arm is configured).
+//	{"get_tcp_buffer": {}}                                   — return all poses currently in the TCP capture buffer.
+//	{"clear_tcp_buffer": {}}                                 — empty the TCP capture buffer and return the count removed.
 //	{"define_frame": {"name": "<n>", "method": "<m>"}}       — compute a frame from the buffer (methods: 3point|point|tcp_snapshot), persist it, and clear the buffer.
 //	{"list_frames": {}}                                      — return all currently committed frames.
 //	{"delete_frame": {"name": "<n>"}}                        — remove a single named frame and persist the updated set.
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
+//	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
+//	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact. Run after teach_tcp_position, since it writes orientation only and does not re-derive the translation.
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -50,6 +55,32 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 	case has(cmd, "clear_buffer"):
 		return map[string]interface{}{"cleared": pt.store.ClearBuffer()}, nil
 
+	case has(cmd, "capture_tcp_point"):
+		if pt.flange == nil {
+			return nil, errors.New("arm dependency not configured; cannot capture TCP point")
+		}
+		pose, err := pt.flange.CaptureFlange(ctx)
+		if err != nil {
+			return nil, err
+		}
+		idx := pt.store.AddTCPCapture(pose)
+		return map[string]interface{}{
+			"index":      idx,
+			"buffer_len": pt.store.TCPBufferLen(),
+			"pose":       poseToMap(pose),
+		}, nil
+
+	case has(cmd, "get_tcp_buffer"):
+		buf := pt.store.TCPBuffer()
+		pts := make([]interface{}, len(buf))
+		for i, p := range buf {
+			pts[i] = poseToMap(p)
+		}
+		return map[string]interface{}{"points": pts}, nil
+
+	case has(cmd, "clear_tcp_buffer"):
+		return map[string]interface{}{"cleared": pt.store.ClearTCPBuffer()}, nil
+
 	case has(cmd, "define_frame"):
 		return pt.defineFrame(ctx, cmd["define_frame"])
 
@@ -65,6 +96,12 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "clear_frames"):
 		return pt.clearFrames(ctx)
+
+	case has(cmd, "teach_tcp_position"):
+		return pt.teachTCPPosition(ctx)
+
+	case has(cmd, "teach_tcp_orientation"):
+		return pt.teachTCPOrientation(ctx, cmd["teach_tcp_orientation"])
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -228,6 +265,107 @@ func (pt *teachTracker) saveFrames(ctx context.Context) error {
 		specs = append(specs, config.FrameSpecFromPose(n, "", pif.Parent(), pif.Pose()))
 	}
 	return pt.persist.Save(ctx, specs)
+}
+
+// teachTCPPosition solves the pivot over the TCP capture buffer, persists the
+// resolved tool tip as the tcp_component's frame translation (parent = arm),
+// and clears the TCP buffer on success.
+func (pt *teachTracker) teachTCPPosition(ctx context.Context) (map[string]interface{}, error) {
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP")
+	}
+	if pt.armName == "" {
+		return nil, errors.New("arm dependency not configured; cannot teach TCP")
+	}
+
+	buf := pt.store.TCPBuffer()
+	offset, residual, err := frames.ComputePivotTCP(buf)
+	if err != nil {
+		return nil, fmt.Errorf("pivot solve failed: %w", err)
+	}
+
+	// commitMu serializes this persist against concurrent define/delete/clear/teach
+	// commits so the persisted state stays consistent.
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	off := offset
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.tcpComponent, pt.armName, &off, nil); perr != nil {
+		return nil, fmt.Errorf("persist failed, TCP not committed: %w", perr)
+	}
+
+	pt.store.ClearTCPBuffer()
+	return map[string]interface{}{
+		"committed":    true,
+		"offset":       map[string]interface{}{"x": offset.X, "y": offset.Y, "z": offset.Z},
+		"residual_rms": residual,
+	}, nil
+}
+
+// teachTCPOrientation persists an explicit tool orientation (OV degrees) to the
+// tcp_component's frame, leaving the taught translation intact. Tool orientation
+// cannot be derived from tip touches, so it is supplied by the operator.
+func (pt *teachTracker) teachTCPOrientation(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("teach_tcp_orientation args must be an object")
+	}
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP orientation")
+	}
+	if pt.armName == "" {
+		return nil, errors.New("arm dependency not configured; cannot teach TCP")
+	}
+
+	// num reads an optional numeric key: a MISSING key defaults to 0, but a key
+	// that is PRESENT with a non-float64 value is a typo/type error and must
+	// surface rather than silently coercing to 0 (which could persist the wrong
+	// orientation). A mistyped key NAME is indistinguishable from a missing key
+	// and cannot be caught here.
+	num := func(k string) (float64, error) {
+		v, present := args[k]
+		if !present {
+			return 0, nil
+		}
+		f, ok := v.(float64)
+		if !ok {
+			return 0, fmt.Errorf("%s must be a number", k)
+		}
+		return f, nil
+	}
+	ox, err := num("o_x")
+	if err != nil {
+		return nil, err
+	}
+	oy, err := num("o_y")
+	if err != nil {
+		return nil, err
+	}
+	oz, err := num("o_z")
+	if err != nil {
+		return nil, err
+	}
+	theta, err := num("theta")
+	if err != nil {
+		return nil, err
+	}
+	ov := &spatialmath.OrientationVectorDegrees{OX: ox, OY: oy, OZ: oz, Theta: theta}
+	if ov.OX == 0 && ov.OY == 0 && ov.OZ == 0 {
+		return nil, errors.New("orientation vector (o_x,o_y,o_z) must be non-zero")
+	}
+
+	// commitMu serializes this persist against concurrent teach/define commits on
+	// the same tcp_component frame so the persisted state stays consistent.
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.tcpComponent, pt.armName, nil, ov); perr != nil {
+		return nil, fmt.Errorf("persist failed, TCP orientation not committed: %w", perr)
+	}
+	return map[string]interface{}{
+		"committed":   true,
+		"orientation": map[string]interface{}{"o_x": ov.OX, "o_y": ov.OY, "o_z": ov.OZ, "theta": ov.Theta},
+	}, nil
 }
 
 // has reports whether key k is present in m.

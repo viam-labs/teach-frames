@@ -5,8 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/viam-labs/teach-frames/config"
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
+
+	"github.com/viam-labs/teach-frames/config"
 )
 
 func TestFakePersisterRecordsFrames(t *testing.T) {
@@ -36,4 +39,25 @@ func TestFakePersisterCopiesInput(t *testing.T) {
 func TestPersistersImplementInterface(t *testing.T) {
 	var _ ConfigPersister = (*Fake)(nil)
 	var _ ConfigPersister = (*AppPersister)(nil)
+}
+
+func TestFakePersisterRecordsComponentFrame(t *testing.T) {
+	f := &Fake{}
+	tr := &r3.Vector{X: 1, Y: 2, Z: 3}
+	ov := &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 90}
+
+	err := f.SaveComponentFrame(context.Background(), "tool", "my-arm", tr, ov)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, f.SavedComponent, test.ShouldEqual, "tool")
+	test.That(t, f.SavedParent, test.ShouldEqual, "my-arm")
+	test.That(t, f.SavedTranslation, test.ShouldEqual, tr)
+	test.That(t, f.SavedOrientation, test.ShouldEqual, ov)
+}
+
+func TestFakePersisterSaveComponentFrameReturnsConfiguredError(t *testing.T) {
+	want := errors.New("boom")
+	f := &Fake{FrameErr: want}
+	err := f.SaveComponentFrame(context.Background(), "tool", "my-arm", &r3.Vector{}, nil)
+	test.That(t, err, test.ShouldBeError, want)
+	test.That(t, f.SavedComponent, test.ShouldEqual, "") // not recorded on error
 }

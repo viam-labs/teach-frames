@@ -165,3 +165,46 @@ func TestBufferReturnsCopy(t *testing.T) {
 	internal := s.Buffer()
 	test.That(t, internal[0], test.ShouldNotBeNil)
 }
+
+func TestTCPBuffer(t *testing.T) {
+	s := New()
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 0)
+
+	p0 := spatialmath.NewZeroPose()
+	idx := s.AddTCPCapture(p0)
+	test.That(t, idx, test.ShouldEqual, 0)
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 1)
+
+	s.AddTCPCapture(spatialmath.NewZeroPose())
+	test.That(t, len(s.TCPBuffer()), test.ShouldEqual, 2)
+
+	// TCP buffer is independent of the frame buffer.
+	s.AddCapture(spatialmath.NewZeroPose())
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 2)
+	test.That(t, s.BufferLen(), test.ShouldEqual, 1)
+
+	test.That(t, s.ClearTCPBuffer(), test.ShouldEqual, 2)
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 0)
+}
+
+// TestTCPBufferReturnsCopy verifies that mutating the slice returned by
+// TCPBuffer() does NOT affect the store's internal buffer.
+func TestTCPBufferReturnsCopy(t *testing.T) {
+	s := New()
+	p1 := spatialmath.NewPoseFromPoint(r3.Vector{X: 1})
+	p2 := spatialmath.NewPoseFromPoint(r3.Vector{X: 2})
+	s.AddTCPCapture(p1)
+	s.AddTCPCapture(p2)
+
+	got := s.TCPBuffer()
+	test.That(t, len(got), test.ShouldEqual, 2)
+
+	// Mutate the returned slice — set a nil element and truncate it.
+	got[0] = nil
+	got = got[:1]
+
+	// The store must be unaffected.
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 2)
+	internal := s.TCPBuffer()
+	test.That(t, internal[0], test.ShouldNotBeNil)
+}

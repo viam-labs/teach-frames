@@ -3,6 +3,8 @@ package persist
 import (
 	"testing"
 
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
 
 	"github.com/viam-labs/teach-frames/config"
@@ -306,4 +308,131 @@ func TestSetComponentFrames_EmptyFramesAllowed(t *testing.T) {
 	framesRaw, ok := attrs["frames"].([]interface{})
 	test.That(t, ok, test.ShouldBeTrue)
 	test.That(t, len(framesRaw), test.ShouldEqual, 0)
+}
+
+func TestSetComponentFrame_TranslationAndOrientation(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{"name": "tool", "attributes": map[string]interface{}{}},
+		},
+	}
+	tr := &r3.Vector{X: 10, Y: -5, Z: 120}
+	ov := &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 45}
+
+	out, err := setComponentFrame(cfg, "tool", "my-arm", tr, ov)
+	test.That(t, err, test.ShouldBeNil)
+
+	comp := out["components"].([]interface{})[0].(map[string]interface{})
+	frame := comp["frame"].(map[string]interface{})
+	test.That(t, frame["parent"], test.ShouldEqual, "my-arm")
+	transl := frame["translation"].(map[string]interface{})
+	test.That(t, transl["x"], test.ShouldEqual, 10.0)
+	test.That(t, transl["z"], test.ShouldEqual, 120.0)
+	orient := frame["orientation"].(map[string]interface{})
+	test.That(t, orient["type"], test.ShouldEqual, "ov_degrees")
+
+	// Original config is not mutated.
+	origComp := cfg["components"].([]interface{})[0].(map[string]interface{})
+	_, hadFrame := origComp["frame"]
+	test.That(t, hadFrame, test.ShouldBeFalse)
+}
+
+func TestSetComponentFrame_MissingComponent(t *testing.T) {
+	cfg := map[string]interface{}{"components": []interface{}{}}
+	_, err := setComponentFrame(cfg, "nope", "arm", &r3.Vector{}, nil)
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// TestSetComponentFrame_OverridesParentPreservesGeometry locks in the current
+// contract: the provided parent is AUTHORITATIVE for TCP-teaching writes (it
+// overrides any differing existing parent), while other existing frame keys
+// (e.g. geometry) are preserved untouched.
+func TestSetComponentFrame_OverridesParentPreservesGeometry(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{
+				"name": "tool",
+				"frame": map[string]interface{}{
+					"parent":   "existing-parent",
+					"geometry": map[string]interface{}{"type": "box"},
+				},
+			},
+		},
+	}
+	out, err := setComponentFrame(cfg, "tool", "my-arm", &r3.Vector{X: 1}, nil)
+	test.That(t, err, test.ShouldBeNil)
+	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
+	test.That(t, frame["parent"], test.ShouldEqual, "my-arm")           // overridden
+	test.That(t, frame["geometry"], test.ShouldNotBeNil)                // preserved
+}
+
+// TestSetComponentFrame_OverridesExistingWorldParent is a regression test for
+// bug I1: a tool with a pre-existing frame.parent of "world" (a common RDK
+// default) must have its parent forcibly replaced by the provided arm parent
+// when TCP teaching writes the flange-relative translation. Leaving "world" in
+// place would silently place the tool 120mm from the WORLD origin instead of
+// off the arm flange.
+func TestSetComponentFrame_OverridesExistingWorldParent(t *testing.T) {
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{
+				"name": "tool",
+				"frame": map[string]interface{}{
+					"parent":      "world",
+					"translation": map[string]interface{}{"x": 0.0, "y": 0.0, "z": 0.0},
+				},
+			},
+		},
+	}
+	newTranslation := &r3.Vector{X: 10, Y: -5, Z: 120}
+	out, err := setComponentFrame(cfg, "tool", "my-arm", newTranslation, nil)
+	test.That(t, err, test.ShouldBeNil)
+
+	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
+	test.That(t, frame["parent"], test.ShouldEqual, "my-arm")
+
+	transl := frame["translation"].(map[string]interface{})
+	test.That(t, transl["x"], test.ShouldEqual, 10.0)
+	test.That(t, transl["y"], test.ShouldEqual, -5.0)
+	test.That(t, transl["z"], test.ShouldEqual, 120.0)
+}
+
+// TestSetComponentFrame_NilLeavesExistingSubfield locks in the headline
+// contract: a nil sub-field argument leaves that sub-field untouched. Here a
+// non-nil translation is written while a nil orientation preserves the
+// component's pre-existing orientation unchanged.
+func TestSetComponentFrame_NilLeavesExistingSubfield(t *testing.T) {
+	existingOrientation := map[string]interface{}{
+		"type": "ov_degrees",
+		"value": map[string]interface{}{
+			"x": 0.0, "y": 0.0, "z": 1.0, "th": 90.0,
+		},
+	}
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{
+				"name": "tool",
+				"frame": map[string]interface{}{
+					"parent":      "my-arm",
+					"translation": map[string]interface{}{"x": 1.0, "y": 2.0, "z": 3.0},
+					"orientation": existingOrientation,
+				},
+			},
+		},
+	}
+
+	// Update translation only; nil orientation must leave the existing one intact.
+	out, err := setComponentFrame(cfg, "tool", "my-arm", &r3.Vector{X: 10, Y: 20, Z: 30}, nil)
+	test.That(t, err, test.ShouldBeNil)
+
+	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
+
+	// (a) Translation was updated to the new value.
+	transl := frame["translation"].(map[string]interface{})
+	test.That(t, transl["x"], test.ShouldEqual, 10.0)
+	test.That(t, transl["y"], test.ShouldEqual, 20.0)
+	test.That(t, transl["z"], test.ShouldEqual, 30.0)
+
+	// (b) Pre-existing orientation is preserved unchanged.
+	test.That(t, frame["orientation"], test.ShouldResemble, existingOrientation)
 }

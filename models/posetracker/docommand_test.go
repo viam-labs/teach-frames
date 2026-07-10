@@ -447,6 +447,69 @@ func TestDeleteFrameMissingName(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
+// --- capture_tcp_point / get_tcp_buffer / clear_tcp_buffer tests ---
+
+func TestCaptureTCPPoint(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = &posesource.FakeFlange{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}),
+	}}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["index"], test.ShouldEqual, 0)
+	test.That(t, resp["buffer_len"], test.ShouldEqual, 1)
+}
+
+func TestCaptureTCPPointNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestGetTCPBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = &posesource.FakeFlange{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1}),
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 2}),
+	}}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_tcp_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	points, ok := resp["points"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(points), test.ShouldEqual, 2)
+}
+
+func TestClearTCPBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = &posesource.FakeFlange{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1}),
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 2}),
+	}}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_tcp_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["cleared"], test.ShouldEqual, 2)
+
+	resp, err = pt.DoCommand(context.Background(), map[string]interface{}{"get_tcp_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	points, ok := resp["points"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(points), test.ShouldEqual, 0)
+}
+
 // TestDefineFrameThreePointCollinear verifies that collinear points produce an
 // error, leave the buffer intact, and do not commit any frame to the store.
 func TestDefineFrameThreePointCollinear(t *testing.T) {
@@ -476,4 +539,169 @@ func TestDefineFrameThreePointCollinear(t *testing.T) {
 
 	// Nothing should have been persisted.
 	test.That(t, len(fake.Saved), test.ShouldEqual, 0)
+}
+
+// --- teach_tcp_position tests ---
+
+// makeFlangePoseForTest is a local copy of makeFlangePose from frames/tcp_test.go
+// (kept local to avoid cross-package test coupling). It returns a flange pose
+// (given orientation, at the given base-frame flange origin) such that a tool
+// tip `tip` in the flange frame lands on the fixed base point `target`. It
+// solves p = target - R*tip so every synthesized capture is consistent with
+// one tip and one touched point. R*tip is computed via spatialmath.Compose
+// (not by hand-multiplying RotationMatrix() columns) so the synthesized pose
+// matches how the SDK actually composes real captured poses.
+func makeFlangePoseForTest(ov *spatialmath.OrientationVectorDegrees, tip, target r3.Vector) spatialmath.Pose {
+	rotationOnly := spatialmath.NewPoseFromOrientation(ov)
+	rTip := spatialmath.Compose(rotationOnly, spatialmath.NewPoseFromPoint(tip)).Point()
+	p := target.Sub(rTip)
+	return spatialmath.NewPose(p, ov)
+}
+
+func TestTeachTCPPositionPersistsTranslation(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "my-arm"
+
+	tip := r3.Vector{X: 10, Y: -5, Z: 120}
+	target := r3.Vector{X: 400, Y: 0, Z: 300}
+	// Orientations must tilt the flange Z axis away from the base Z axis (not
+	// just spin about it) so the 6x6 least-squares system is well-conditioned;
+	// see frames/tcp_test.go TestComputePivotTCPRecoversTip for details.
+	ovs := []*spatialmath.OrientationVectorDegrees{
+		{OZ: 1, Theta: 0},
+		{OX: 0.3, OZ: 1, Theta: 30},
+		{OY: 0.3, OZ: 1, Theta: 75},
+		{OX: -0.2, OY: 0.2, OZ: 1, Theta: 150},
+	}
+	for _, ov := range ovs {
+		pt.store.AddTCPCapture(makeFlangePoseForTest(ov, tip, target))
+	}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"teach_tcp_position": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["committed"], test.ShouldEqual, true)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "tool")
+	test.That(t, fake.SavedParent, test.ShouldEqual, "my-arm")
+	test.That(t, fake.SavedTranslation, test.ShouldNotBeNil)
+	// The persisted translation must be the SOLVED tip, not the common touched
+	// point, a zero vector, or the RHS — proves teachTCPPosition plumbs the
+	// pivot solution through to persistence.
+	test.That(t, spatialmath.R3VectorAlmostEqual(*fake.SavedTranslation, tip, 1e-6), test.ShouldBeTrue)
+	test.That(t, pt.store.TCPBufferLen(), test.ShouldEqual, 0) // cleared on success
+
+	residual, ok := resp["residual_rms"].(float64)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, residual < 1.0, test.ShouldBeTrue)
+}
+
+func TestTeachTCPPositionPersistenceDisabled(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = nil
+	for i := 0; i < 4; i++ {
+		pt.store.AddTCPCapture(spatialmath.NewZeroPose())
+	}
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"teach_tcp_position": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, pt.store.TCPBufferLen(), test.ShouldEqual, 4) // buffer preserved on failure
+}
+
+// --- teach_tcp_orientation tests ---
+
+func TestTeachTCPOrientationPersistsOrientation(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "my-arm"
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 45.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["committed"], test.ShouldEqual, true)
+	test.That(t, fake.SavedOrientation, test.ShouldNotBeNil)
+	test.That(t, fake.SavedTranslation, test.ShouldBeNil) // translation untouched
+}
+
+func TestTeachTCPOrientationRejectsZeroVector(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 0.0, "theta": 0.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestTeachTCPOrientationRejectsWrongTypedValue(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = &persist.Fake{}
+	// A present-but-wrong-typed value on a real key (o_x as a string, not a
+	// number) must error rather than silently coercing to 0. o_z is a valid
+	// nonzero float here so the all-zero guard cannot mask the type error —
+	// without the type check this would silently persist the WRONG orientation.
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": "bad", "o_z": 1.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestTeachTCPOrientationPersistenceDisabled(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 45.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// --- armName guard tests (M3) ---
+
+// TestTeachTCPPositionNoArm verifies teach_tcp_position errors when no arm is
+// configured (pt.armName == ""), and — critically — that nothing is persisted.
+// Without this guard, an empty armName would flow through to
+// persist.SaveComponentFrame as an empty parent string and get silently
+// written into the tool's frame config. Captures are seeded so a solve would
+// otherwise succeed, isolating this test to the armName guard regardless of
+// whether it is placed before or after the buffer-length check.
+func TestTeachTCPPositionNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "" // no arm configured
+
+	tip := r3.Vector{X: 10, Y: -5, Z: 120}
+	target := r3.Vector{X: 400, Y: 0, Z: 300}
+	ovs := []*spatialmath.OrientationVectorDegrees{
+		{OZ: 1, Theta: 0},
+		{OX: 0.3, OZ: 1, Theta: 30},
+		{OY: 0.3, OZ: 1, Theta: 75},
+		{OX: -0.2, OY: 0.2, OZ: 1, Theta: 150},
+	}
+	for _, ov := range ovs {
+		pt.store.AddTCPCapture(makeFlangePoseForTest(ov, tip, target))
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"teach_tcp_position": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "") // nothing persisted
+}
+
+// TestTeachTCPOrientationNoArm verifies teach_tcp_orientation errors when no
+// arm is configured, and that nothing is persisted.
+func TestTeachTCPOrientationNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "" // no arm configured
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 45.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "") // nothing persisted
 }

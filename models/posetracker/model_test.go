@@ -4,10 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/components/posetracker"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/resource"
 	"go.viam.com/rdk/services/motion"
+	"go.viam.com/rdk/testutils/inject"
 	injectmotion "go.viam.com/rdk/testutils/inject/motion"
 	"go.viam.com/test"
 
@@ -152,4 +154,98 @@ func TestNewPoseTrackerConstructor(t *testing.T) {
 	test.That(t, len(poses), test.ShouldEqual, 1)
 	_, ok := poses["valid-frame"]
 	test.That(t, ok, test.ShouldBeTrue)
+}
+
+func TestValidateDeclaresArmDependency(t *testing.T) {
+	cfg := &Config{TCPComponent: "tool", Arm: "my-arm"}
+	req, _, err := cfg.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, req, test.ShouldContain, "my-arm")
+}
+
+func TestValidateNoArmIsValid(t *testing.T) {
+	cfg := &Config{TCPComponent: "tool"}
+	req, _, err := cfg.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	// Only the motion service dep is present; the arm is absent.
+	test.That(t, len(req), test.ShouldEqual, 1)
+	test.That(t, req, test.ShouldContain, defaultMotionService)
+	test.That(t, req, test.ShouldNotContain, "my-arm")
+}
+
+// TestNewPoseTrackerNoArmLeavesFlangeNil verifies that when the "arm" config
+// attribute is omitted, TCP teaching stays disabled: the constructor still
+// succeeds (arm is optional) but pt.flange remains nil.
+func TestNewPoseTrackerNoArmLeavesFlangeNil(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{motionName: injectmotion.NewMotionService(defaultMotionService)}
+
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "tool"}, // Arm intentionally omitted
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+
+	tt := res.(*teachTracker)
+	test.That(t, tt.flange, test.ShouldBeNil)
+	test.That(t, tt.armName, test.ShouldEqual, "")
+	test.That(t, tt.tcpComponent, test.ShouldEqual, "tool")
+}
+
+// TestNewPoseTrackerWithArmBuildsFlange verifies the core new behavior of this
+// commit: when a resolvable arm is provided as a dependency and named via the
+// "arm" config attribute, the constructor wires a *posesource.ArmSource wrapping
+// that arm into pt.flange (TCP teaching enabled).
+func TestNewPoseTrackerWithArmBuildsFlange(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	injArm := inject.NewArm("my-arm")
+	deps := resource.Dependencies{
+		motionName:          injectmotion.NewMotionService(defaultMotionService),
+		arm.Named("my-arm"): injArm,
+	}
+
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "tool", Arm: "my-arm"},
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+
+	tt := res.(*teachTracker)
+	test.That(t, tt.armName, test.ShouldEqual, "my-arm")
+	test.That(t, tt.flange, test.ShouldNotBeNil)
+
+	armSrc, ok := tt.flange.(*posesource.ArmSource)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, armSrc.Arm, test.ShouldEqual, injArm)
+}
+
+// TestNewPoseTrackerArmUnresolvableWarnsAndContinues verifies the warn-and-continue
+// path: when "arm" is configured but the dependency is absent, arm.FromDependencies
+// fails, construction still succeeds (no error), and pt.flange stays nil.
+func TestNewPoseTrackerArmUnresolvableWarnsAndContinues(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	// deps deliberately omit the arm so arm.FromDependencies fails.
+	deps := resource.Dependencies{motionName: injectmotion.NewMotionService(defaultMotionService)}
+
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "tool", Arm: "my-arm"},
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+
+	tt := res.(*teachTracker)
+	test.That(t, tt.armName, test.ShouldEqual, "my-arm")
+	test.That(t, tt.flange, test.ShouldBeNil)
 }

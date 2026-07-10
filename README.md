@@ -25,9 +25,10 @@ Implements the PoseTracker API. Captures TCP poses from a motion service and man
 | `motion_service` | string | no | `"builtin"` | Name of the motion service dependency used to query the TCP pose. |
 | `tcp_component` | string | yes | — | Name of the component (e.g. an arm) whose TCP pose is captured. |
 | `destination_frame` | string | no | `"world"` | The reference frame that captured poses and taught frames are expressed relative to. |
+| `arm` | string | no | — | Name of the arm component used for TCP pivot teaching. Enables the TCP-teaching DoCommands when set. |
 | `frames` | array | no | `[]` | Module-managed list of taught frames. Do not hand-edit unless you understand the `FrameSpec` schema (each entry has `name`, `method`, `parent`, and `pose` with `x`, `y`, `z`, `o_x`, `o_y`, `o_z`, `theta`). |
 
-The component declares its motion service (the value of `motion_service`, defaulting to `builtin`) as a dependency so the RDK wires it up before construction.
+The component declares its motion service (the value of `motion_service`, defaulting to `builtin`) as a dependency so the RDK wires it up before construction. When `arm` is set, the named arm is declared as a required dependency too and is used exclusively for TCP pivot teaching (see [TCP teaching](#tcp-teaching) below) — it is independent of `tcp_component`, which is the component whose TCP/tool frame gets taught.
 
 ### `viam-labs:teach-frames:world-state-store` (`rdk:service:world_state_store`)
 
@@ -54,6 +55,11 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 | `list_frames` | `{}` | Returns all currently committed frames. | `frames` (map of name → pose) |
 | `delete_frame` | `{"name": "<name>"}` | Removes a single named frame and persists the updated set. | `deleted` (bool) |
 | `clear_frames` | `{}` | Removes all committed frames and persists the empty set. | `deleted` (count) |
+| `capture_tcp_point` | `{}` | Reads the current arm flange pose (`arm.EndPosition`, in the arm base frame) and appends it to a separate TCP capture buffer. Errors if no `arm` is configured. | `index` (0-based position), `buffer_len`, `pose` (x/y/z/o_x/o_y/o_z/theta) |
+| `teach_tcp_position` | `{}` | Least-squares pivot solve over the TCP buffer (requires ≥4 captures spanning varied orientations), persists the solved tip offset as `tcp_component.frame.translation` (parent = the configured `arm`; requires platform-API creds), and clears the TCP buffer on success. | `committed` (bool), `offset` (x/y/z), `residual_rms` (fit residual, mm) |
+| `teach_tcp_orientation` | `{"o_x": <n>, "o_y": <n>, "o_z": <n>, "theta": <n>}` | Persists an explicit tool orientation (orientation-vector degrees) to `tcp_component.frame.orientation`, leaving the taught translation unchanged. Rejects an all-zero `(o_x, o_y, o_z)` vector. Requires platform-API creds. | `committed` (bool), `orientation` (o_x/o_y/o_z/theta) |
+| `get_tcp_buffer` | `{}` | Returns all poses currently in the TCP capture buffer. | `points` (array of pose maps) |
+| `clear_tcp_buffer` | `{}` | Empties the TCP capture buffer. | `cleared` (count removed) |
 
 ### `define_frame` methods
 
@@ -72,9 +78,59 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 {"define_frame": {"name": "fixture_a", "method": "3point"}}
 ```
 
+### TCP teaching
+
+TCP teaching calibrates a tool's tip offset (its TCP) by touching a single fixed
+world point from several arm orientations — the same calibration a teach
+pendant performs for a new tool. It requires the optional `arm` config
+attribute; without it, the `capture_tcp_point`/`teach_tcp_*` commands return an
+"arm dependency not configured" error.
+
+Unlike `capture_point` (which reads the world TCP pose via the motion service
+into the frame-capture buffer used by `define_frame`), `capture_tcp_point`
+reads the **arm flange pose** directly via `arm.EndPosition` into a separate,
+dedicated TCP capture buffer. A taught TCP is never added to the `frames` set
+and never appears in `Poses()` — it is a one-shot calibration written directly
+to the `tcp_component`'s own `frame` config (translation and/or orientation),
+with `tcp_component.frame.parent` set to the configured `arm`.
+
+`teach_tcp_position` requires **at least 4** captured points spanning varied
+arm orientations (the pivot solve is a least-squares fit; too few points, or
+orientations that are too similar, leave the system rank-deficient and the
+command returns a descriptive error without clearing the buffer). On success it
+persists the solved offset to `tcp_component.frame.translation` and reports
+`residual_rms` — the RMS fit residual in mm — as a trust signal for how
+consistently the touches hit one physical point (aim for well under 1–2 mm with
+careful touches).
+
+`teach_tcp_orientation` is independent of the pivot solve: tool orientation
+cannot be derived from tip touches, so it takes an explicit orientation vector
+`(o_x, o_y, o_z, theta)` and persists it verbatim to
+`tcp_component.frame.orientation`, leaving `translation` untouched. It is
+optional — omitting it leaves the taught tool's orientation at identity — and
+should be run after `teach_tcp_position` (or alongside a previously-taught
+tip), since it never re-derives the translation. An all-zero `(o_x, o_y, o_z)`
+vector is rejected.
+
+Both `teach_tcp_position` and `teach_tcp_orientation` persist via the same
+platform-API credentials as frame teaching (see
+[Persistence and credentials](#persistence-and-credentials)); if persistence is
+disabled, they return an error rather than silently discarding the result.
+
+**Example — teach a TCP from 4 touches, then set its orientation:**
+
+```json
+{"capture_tcp_point": {}}
+{"capture_tcp_point": {}}
+{"capture_tcp_point": {}}
+{"capture_tcp_point": {}}
+{"teach_tcp_position": {}}
+{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}}
+```
+
 ## Persistence and credentials
 
-Taught frames are persisted by patching this component's own `attributes.frames` in the robot part config via the Viam app API (read-modify-write on `GetRobotPart` / `UpdateRobotPart`).
+Taught frames are persisted by patching this component's own `attributes.frames` in the robot part config via the Viam app API (read-modify-write on `GetRobotPart` / `UpdateRobotPart`). TCP teaching (`teach_tcp_position` / `teach_tcp_orientation`) uses the same read-modify-write mechanism and credentials, but patches the `frame` of the configured `tcp_component` instead.
 
 The module reads credentials from the standard platform-API environment variables injected by the Viam agent:
 
@@ -84,7 +140,7 @@ The module reads credentials from the standard platform-API environment variable
 | `VIAM_API_KEY_ID` | API key ID |
 | `VIAM_MACHINE_PART_ID` | Part ID of this machine part |
 
-If any of these variables is absent at startup, persistence is **disabled** — a warning is logged and the component still starts. `capture_point` and `Poses()` continue to work. `define_frame`, `delete_frame`, and `clear_frames` return an error ("persistence disabled") rather than silently losing state.
+If any of these variables is absent at startup, persistence is **disabled** — a warning is logged and the component still starts. `capture_point`, `capture_tcp_point`, and `Poses()` continue to work. `define_frame`, `delete_frame`, `clear_frames`, `teach_tcp_position`, and `teach_tcp_orientation` return an error ("persistence disabled") rather than silently losing state.
 
 See https://docs.viam.com/build-modules/platform-apis/ for the env var names and the SDK helper used to build the app client.
 
@@ -100,13 +156,20 @@ See https://docs.viam.com/build-modules/platform-apis/ for the env var names and
       "attributes": {}
     },
     {
+      "name": "my-gripper",
+      "api": "rdk:component:gripper",
+      "model": "viam:some-gripper:model",
+      "attributes": {}
+    },
+    {
       "name": "teach-tracker",
       "api": "rdk:component:pose_tracker",
       "model": "viam-labs:teach-frames:pose-tracker",
       "attributes": {
         "motion_service": "builtin",
-        "tcp_component": "my-arm",
-        "destination_frame": "world"
+        "tcp_component": "my-gripper",
+        "destination_frame": "world",
+        "arm": "my-arm"
       }
     }
   ],
