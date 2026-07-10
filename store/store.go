@@ -65,6 +65,7 @@ func (s *FrameStore) AddTCPCapture(p spatialmath.Pose) int {
 }
 
 // TCPBuffer returns a shallow copy of the current TCP capture buffer.
+// Mutating the returned slice does not affect the store.
 func (s *FrameStore) TCPBuffer() []spatialmath.Pose {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
