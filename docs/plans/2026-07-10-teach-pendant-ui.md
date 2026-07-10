@@ -604,11 +604,13 @@ Directory: `frontend/`. The app is a Svelte 5 + Vite SPA using `@viamrobotics/sv
   "dependencies": {
     "@viamrobotics/sdk": "^0.51.0",
     "@viamrobotics/svelte-sdk": "^1.2.3",
-    "@tanstack/svelte-query": "^6.0.8"
+    "@tanstack/svelte-query": "^6.0.8",
+    "js-cookie": "^3.0.5"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@testing-library/svelte": "^5.2.0",
+    "@types/js-cookie": "^3.0.6",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.6.0",
@@ -665,7 +667,7 @@ frontend:
 
 Make the existing `module` target depend on `frontend` (so `frontend/dist` exists before packaging). Inspect the current `module` target and prepend `frontend` as a prerequisite.
 
-**Step 2:** Add an `applications` array to `meta.json`:
+**Step 2:** Add an `applications` array to `meta.json` (schema confirmed from viam-docs `docs/build-apps/hosting/meta-json-reference.md`). Fields: `name` (required, lowercase alphanumeric + hyphens, no leading/trailing hyphen), `type` (required, `"single_machine"` | `"multi_machine"` — use `single_machine`), `entrypoint` (required, path to the built HTML **relative to the archive root**). Optional: `fragmentIds`, `allowedOrgIds`, `logoPath`, `customizations`.
 
 ```json
 "applications": [
@@ -677,14 +679,18 @@ Make the existing `module` target depend on `frontend` (so `frontend/dist` exist
 ]
 ```
 
-> Confirm the exact `applications` schema keys against `viam module` docs (`name`, `type`, `entrypoint`) before upload. `single_machine` is the type for a per-machine control UI.
+Requirements confirmed by docs:
+- `visibility` **must be `"public"`** — private modules cannot host applications. `meta.json` already has `"visibility": "public"`. Good.
+- `meta.json` must sit at the **root of the uploaded archive**; `entrypoint` is resolved relative to that root, so `frontend/dist/index.html` must ship at exactly that path inside the tarball.
+- Static files only — no server-side code (this app is a static SPA, fine).
+- On upload, use `--platform any` (web apps are platform-independent). NOTE: the existing module `meta.json` `build.arch` lists Go platforms for the binary; the application upload is orthogonal — the app ships in the same tarball via `entrypoint`.
 
-**Step 3:** Ensure the packaged tarball includes `frontend/dist`. Check the `module` build script / any packaging manifest and confirm `frontend/dist/**` is not excluded by `.gitignore`-driven packaging (module packaging uses an explicit file list or the build output dir — verify `frontend/dist` ships).
+**Step 3:** Ensure the packaged tarball includes `frontend/dist` **at the path `frontend/dist/index.html`** (matching `entrypoint`). Inspect the `module` target's `tar` invocation / packaging file list and confirm `frontend/dist/**` is added (it is git-ignored per Task 8, so it must be included explicitly by the build, not via git). Add it to the tar file list if the packaging uses an explicit list.
 
 **Step 4: Verify**
 
 Run: `make frontend && make module`
-Expected: build succeeds; `bin/module.tar.gz` contains `frontend/dist/index.html` (verify: `tar tzf bin/module.tar.gz | grep frontend/dist/index.html`).
+Expected: build succeeds; the tarball contains `frontend/dist/index.html` (verify: `tar tzf bin/module.tar.gz | grep frontend/dist/index.html`), and `meta.json` is at the archive root (`tar tzf bin/module.tar.gz | grep -x meta.json`).
 
 **Step 5: Commit**
 
@@ -696,38 +702,75 @@ git add Makefile meta.json && git commit -m "build: bundle teach-pendant app int
 
 ### Task 10: Connection layer (ViamProvider)
 
-Wire the SDK provider using the machine identity Viam injects. **This is the one place with an unconfirmed detail** (how the hosted `single_machine` app exposes its part ID + credentials). Implement against the SDK's `ViamProvider` (props: `dialConfigs: Record<partID, DialConf>`, `children`) and isolate the identity source in one module so it is easy to swap once confirmed via `viam module local-app-testing`.
+Wire the SDK provider using the machine identity Viam injects. **Injection mechanism (confirmed from viam-docs `docs/build-apps/hosting/hosting-reference.md`):** a `single_machine` Viam Application receives the machine's connection info via a **browser cookie whose name is the machine ID**, and the machine ID appears in the URL path as `/machine/{id}/...`. The cookie value is JSON:
+
+```json
+{
+  "apiKey": { "id": "api-key-id", "key": "api-key-secret" },
+  "credentials": { "type": "api-key", "payload": "api-key-secret", "authEntity": "api-key-id" },
+  "hostname": "machine-main.xxxx.viam.cloud",
+  "machineId": "machine-uuid",
+  "timestamp": 1712620800
+}
+```
+
+`viam module local-app-testing` injects the exact same cookie in dev, so there is a single code path.
+
+The svelte-sdk's `ViamProvider` takes `dialConfigs: Record<key, DialConf>`; the `key` is an opaque lookup id shared between the provider and the resource clients (it does not have to be the Viam part id — it just must match what we pass to `createResourceClient`). We key everything by the machine id read from the URL/cookie.
 
 **Files (create):** `frontend/src/lib/machine.ts`, modify `frontend/src/App.svelte`
 
-**Step 1:** `frontend/src/lib/machine.ts` — resolve the current machine's part ID + `DialConf`. Read from the injected context that Viam Applications provide (URL params / injected globals). Export:
+**Step 1:** `frontend/src/lib/machine.ts` — read the machine id from the URL path, parse the cookie, and build a `DialConf`:
 
 ```ts
-import type { DialConf } from '@viamrobotics/sdk'
+import Cookies from 'js-cookie'
+import type { DialConf, Credentials } from '@viamrobotics/sdk'
 
 export interface MachineIdentity {
-  partID: string
+  id: string
   dialConf: DialConf
 }
 
-// TODO(confirm): the exact injection mechanism for single_machine Viam Apps.
-// Under `viam module local-app-testing` and in production Viam should provide
-// the machine host + credentials; read them here and return a DialConf.
-export function currentMachine(): MachineIdentity { /* ... */ }
+interface MachineCookie {
+  hostname: string
+  credentials: Credentials
+  machineId: string
+}
+
+// Viam Applications (single_machine) inject a cookie keyed by the machine id,
+// which is the third URL path segment: /machine/{id}/...
+// `viam module local-app-testing` injects the same cookie in dev.
+export function currentMachine(): MachineIdentity {
+  const id = window.location.pathname.split('/')[2]
+  if (!id) throw new Error('no machine id in URL path (expected /machine/{id}/...)')
+  const raw = Cookies.get(id)
+  if (!raw) throw new Error(`no Viam credentials cookie for machine ${id}`)
+  const cookie = JSON.parse(raw) as MachineCookie
+  return {
+    id,
+    dialConf: {
+      host: cookie.hostname,
+      credentials: cookie.credentials,
+      signalingAddress: 'https://app.viam.com:443',
+    },
+  }
+}
 ```
 
-**Step 2:** `App.svelte` wraps content in `ViamProvider`:
+> Confirm the exact `DialConf` field names against the installed `@viamrobotics/sdk` types (`host`, `credentials`, `signalingAddress` are the documented `createRobotClient` fields; `DialConf` should mirror them). Adjust if the installed type differs.
+
+**Step 2:** `App.svelte` wraps content in `ViamProvider`, keyed by the machine id:
 
 ```svelte
 <script lang="ts">
   import { ViamProvider } from '@viamrobotics/svelte-sdk'
   import { currentMachine } from './lib/machine'
   const machine = currentMachine()
-  const dialConfigs = { [machine.partID]: machine.dialConf }
+  const dialConfigs = { [machine.id]: machine.dialConf }
 </script>
 
 <ViamProvider {dialConfigs}>
-  <!-- panels go here (Task 17) -->
+  <!-- panels go here (Task 17); pass machine.id as the partID lookup key -->
 </ViamProvider>
 ```
 
@@ -910,13 +953,23 @@ git add frontend/src/lib/poseTracker.test.ts && git commit -m "test(frontend): p
 
 **Step 1:** Build everything: `make frontend && go build ./...`.
 
-**Step 2:** Run against a machine (real arm or a fake arm module) using the local app proxy:
+**Step 2:** Run against a machine (real arm or a fake arm module) using the local app proxy. Flags confirmed from viam-docs `docs/build-apps/tasks/test-locally.md` — the proxy serves at `http://localhost:8012` and injects the same cookies as production:
 
 ```bash
-viam module local-app-testing --app-name teach-pendant   # confirm exact flags via `viam module local-app-testing --help`
+# Start the Vite dev server (or `npm run preview` on the built dist) first, e.g. on :5173
+cd frontend && npm run dev &
+
+# Then, from a logged-in CLI session, proxy + inject the machine cookie:
+viam login
+viam module local-app-testing \
+  --app-url http://localhost:5173 \
+  --machine-id YOUR-MACHINE-ID
+# opens http://localhost:8012/start which sets the cookie and redirects to the app
 ```
 
-Confirm the end-to-end loop: connection indicator green → jog (cartesian + joint) moves the arm → Stop halts → capture 3 points → define a `3point` frame → frame appears in the list. If the arm-identity injection (Task 10) needs adjustment, fix `machine.ts` here.
+Notes: `--app-url` is **required** (the URL incl. port where the app runs); `--machine-id` selects single-machine mode (the CLI fetches an API key + FQDN for that machine and writes the machine-id-keyed cookie). Port 8012 is hardcoded.
+
+Confirm the end-to-end loop: connection indicator green → jog (cartesian + joint) moves the arm → Stop halts → capture 3 points → define a `3point` frame → frame appears in the list. If the machine-identity cookie parsing (Task 10) needs adjustment, fix `machine.ts` here.
 
 **Step 3:** Update `README.md` with a "Teach Pendant application" section: what it is, that it ships with the module, how to open it, and the local-app-testing command for development.
 
@@ -939,6 +992,6 @@ git add README.md frontend/src/lib/machine.ts && git commit -m "docs: teach pend
 
 ## Open items to confirm during execution
 
-1. **Machine-identity injection** for a `single_machine` Viam App into `ViamProvider.dialConfigs` (Task 10) — confirm via `viam module local-app-testing`.
-2. **`meta.json` `applications` schema** exact keys and the `entrypoint` path semantics inside the tarball (Task 9).
-3. **`@viamrobotics/sdk` version** that satisfies the `svelte-sdk@1.2.3` peer and exports `PoseTrackerClient` / `ArmClient` / `DialConf` (Task 8/11).
+1. ~~Machine-identity injection~~ — **RESOLVED** (viam-docs): cookie keyed by machine id (from URL path `/machine/{id}/...`), read with `js-cookie`; same in prod and under `local-app-testing`. Implemented in Task 10.
+2. ~~`meta.json` `applications` schema~~ — **RESOLVED** (viam-docs): `name`/`type`/`entrypoint` (+ optional `fragmentIds`/`allowedOrgIds`/`logoPath`/`customizations`); `visibility: public` required; `meta.json` at archive root; `entrypoint` relative to root. Implemented in Task 9.
+3. **`@viamrobotics/sdk` version** that satisfies the `svelte-sdk@1.2.3` peer (`>=0.51`) and exports `PoseTrackerClient` / `ArmClient` / `DialConf` / `Credentials` (Task 8/11). Confirm the exact `DialConf` field names at install time (Task 10).
