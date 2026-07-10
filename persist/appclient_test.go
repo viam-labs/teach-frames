@@ -310,7 +310,7 @@ func TestSetComponentFrames_EmptyFramesAllowed(t *testing.T) {
 	test.That(t, len(framesRaw), test.ShouldEqual, 0)
 }
 
-func TestSetComponentFrameTranslationAndOrientation(t *testing.T) {
+func TestSetComponentFrame_TranslationAndOrientation(t *testing.T) {
 	cfg := map[string]interface{}{
 		"components": []interface{}{
 			map[string]interface{}{"name": "tool", "attributes": map[string]interface{}{}},
@@ -337,13 +337,13 @@ func TestSetComponentFrameTranslationAndOrientation(t *testing.T) {
 	test.That(t, hadFrame, test.ShouldBeFalse)
 }
 
-func TestSetComponentFrameMissingComponent(t *testing.T) {
+func TestSetComponentFrame_MissingComponent(t *testing.T) {
 	cfg := map[string]interface{}{"components": []interface{}{}}
 	_, err := setComponentFrame(cfg, "nope", "arm", &r3.Vector{}, nil)
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
-func TestSetComponentFramePreservesExistingParentAndGeometry(t *testing.T) {
+func TestSetComponentFrame_PreservesExistingParentAndGeometry(t *testing.T) {
 	cfg := map[string]interface{}{
 		"components": []interface{}{
 			map[string]interface{}{
@@ -360,4 +360,44 @@ func TestSetComponentFramePreservesExistingParentAndGeometry(t *testing.T) {
 	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
 	test.That(t, frame["parent"], test.ShouldEqual, "existing-parent") // preserved
 	test.That(t, frame["geometry"], test.ShouldNotBeNil)               // preserved
+}
+
+// TestSetComponentFrame_NilLeavesExistingSubfield locks in the headline
+// contract: a nil sub-field argument leaves that sub-field untouched. Here a
+// non-nil translation is written while a nil orientation preserves the
+// component's pre-existing orientation unchanged.
+func TestSetComponentFrame_NilLeavesExistingSubfield(t *testing.T) {
+	existingOrientation := map[string]interface{}{
+		"type": "ov_degrees",
+		"value": map[string]interface{}{
+			"x": 0.0, "y": 0.0, "z": 1.0, "th": 90.0,
+		},
+	}
+	cfg := map[string]interface{}{
+		"components": []interface{}{
+			map[string]interface{}{
+				"name": "tool",
+				"frame": map[string]interface{}{
+					"parent":      "my-arm",
+					"translation": map[string]interface{}{"x": 1.0, "y": 2.0, "z": 3.0},
+					"orientation": existingOrientation,
+				},
+			},
+		},
+	}
+
+	// Update translation only; nil orientation must leave the existing one intact.
+	out, err := setComponentFrame(cfg, "tool", "my-arm", &r3.Vector{X: 10, Y: 20, Z: 30}, nil)
+	test.That(t, err, test.ShouldBeNil)
+
+	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
+
+	// (a) Translation was updated to the new value.
+	transl := frame["translation"].(map[string]interface{})
+	test.That(t, transl["x"], test.ShouldEqual, 10.0)
+	test.That(t, transl["y"], test.ShouldEqual, 20.0)
+	test.That(t, transl["z"], test.ShouldEqual, 30.0)
+
+	// (b) Pre-existing orientation is preserved unchanged.
+	test.That(t, frame["orientation"], test.ShouldResemble, existingOrientation)
 }
