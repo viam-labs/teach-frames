@@ -656,3 +656,52 @@ func TestTeachTCPOrientationPersistenceDisabled(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldNotBeNil)
 }
+
+// --- armName guard tests (M3) ---
+
+// TestTeachTCPPositionNoArm verifies teach_tcp_position errors when no arm is
+// configured (pt.armName == ""), and — critically — that nothing is persisted.
+// Without this guard, an empty armName would flow through to
+// persist.SaveComponentFrame as an empty parent string and get silently
+// written into the tool's frame config. Captures are seeded so a solve would
+// otherwise succeed, isolating this test to the armName guard regardless of
+// whether it is placed before or after the buffer-length check.
+func TestTeachTCPPositionNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "" // no arm configured
+
+	tip := r3.Vector{X: 10, Y: -5, Z: 120}
+	target := r3.Vector{X: 400, Y: 0, Z: 300}
+	ovs := []*spatialmath.OrientationVectorDegrees{
+		{OZ: 1, Theta: 0},
+		{OX: 0.3, OZ: 1, Theta: 30},
+		{OY: 0.3, OZ: 1, Theta: 75},
+		{OX: -0.2, OY: 0.2, OZ: 1, Theta: 150},
+	}
+	for _, ov := range ovs {
+		pt.store.AddTCPCapture(makeFlangePoseForTest(ov, tip, target))
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"teach_tcp_position": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "") // nothing persisted
+}
+
+// TestTeachTCPOrientationNoArm verifies teach_tcp_orientation errors when no
+// arm is configured, and that nothing is persisted.
+func TestTeachTCPOrientationNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	fake := &persist.Fake{}
+	pt.persist = fake
+	pt.tcpComponent = "tool"
+	pt.armName = "" // no arm configured
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"teach_tcp_orientation": map[string]interface{}{"o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 45.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "") // nothing persisted
+}

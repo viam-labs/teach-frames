@@ -169,12 +169,20 @@ operator to run and check off; they directly resolve the two open risks above
       arm as `arm`. Jog the tip to a fixed point from ≥4 varied orientations,
       `capture_tcp_point` each, then `teach_tcp_position`. Confirm
       `residual_rms` is small (e.g. < 1–2 mm for careful touches).
-- [ ] **2. Frame-parent semantics (open risk).** After teaching, inspect the
-      tool component's `frame` in the app config and verify in the visualizer
-      that the tool tip now renders at the correct physical location. If the
-      tip renders relative to the arm *base* instead of the *flange*, the
-      solved offset needs transforming before persistence — record the
-      correction and open a follow-up.
+- [ ] **2. Frame-parent semantics (open risk, narrowed).** The persist layer
+      now FORCES `frame.parent = arm` on every TCP write (`setComponentFrame`
+      in `persist/appclient.go` treats a non-empty provided parent as
+      authoritative and overrides any existing parent) — so a tool with a
+      pre-existing non-arm parent (e.g. a stale "world" default) can no longer
+      silently corrupt the result by keeping the wrong parent. The parent
+      value itself is therefore no longer in question. What remains open and
+      still requires hardware verification is purely the **flange-vs-base
+      geometry question**: after teaching, inspect the tool component's
+      `frame` in the app config and verify in the visualizer that the tool tip
+      now renders at the correct physical location. If Viam's frame system
+      attaches an arm-parented component at the arm *base* instead of the
+      *flange*/end-effector, the solved offset needs transforming before
+      persistence — record the correction and open a follow-up.
 - [ ] **3. Existing tool offset (open risk).** Repeat teaching on a tool that
       already has a non-zero `frame`. Confirm `arm.EndPosition` returns the
       flange pose *without* folding in the tool offset (i.e. re-teaching

@@ -137,9 +137,14 @@ func setComponentFrames(
 
 // setComponentFrame returns a copy of robotConfig with the named component's
 // `frame.translation` and/or `frame.orientation` set. A nil translation or
-// orientation leaves that sub-field untouched. Existing frame keys (geometry, a
-// non-empty parent) are preserved; parent falls back to the provided value when
-// absent or empty. Like setComponentFrames, it does not mutate the input.
+// orientation leaves that sub-field untouched. Existing frame keys other than
+// parent (e.g. geometry) are preserved. The provided parent is AUTHORITATIVE:
+// a non-empty parent argument always OVERRIDES any existing frame parent, since
+// this helper's sole use is TCP teaching, where the persisted translation is
+// only meaningful relative to the arm that produced it — an existing parent
+// (e.g. a stale "world" default) must not be silently kept. An empty provided
+// parent leaves any existing parent untouched. Like setComponentFrames, it does
+// not mutate the input.
 func setComponentFrame(
 	robotConfig map[string]interface{},
 	componentName, parent string,
@@ -184,7 +189,7 @@ func setComponentFrame(
 				frame[k] = v
 			}
 		}
-		if existingParent, _ := frame["parent"].(string); existingParent == "" {
+		if parent != "" {
 			frame["parent"] = parent
 		}
 		if translation != nil {

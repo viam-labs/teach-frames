@@ -274,6 +274,9 @@ func (pt *teachTracker) teachTCPPosition(ctx context.Context) (map[string]interf
 	if pt.persist == nil {
 		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP")
 	}
+	if pt.armName == "" {
+		return nil, errors.New("arm dependency not configured; cannot teach TCP")
+	}
 
 	buf := pt.store.TCPBuffer()
 	offset, residual, err := frames.ComputePivotTCP(buf)
@@ -309,6 +312,9 @@ func (pt *teachTracker) teachTCPOrientation(ctx context.Context, raw interface{}
 	}
 	if pt.persist == nil {
 		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot teach TCP orientation")
+	}
+	if pt.armName == "" {
+		return nil, errors.New("arm dependency not configured; cannot teach TCP")
 	}
 
 	// num reads an optional numeric key: a MISSING key defaults to 0, but a key
