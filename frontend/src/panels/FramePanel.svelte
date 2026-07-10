@@ -2,6 +2,7 @@
   import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
   import { useMachineId } from '../lib/machine'
+  import { bumpCaptureBuffer } from '../lib/captureBuffer.svelte'
   import {
     clearFrames,
     defineFrame,
@@ -36,24 +37,40 @@
 
   async function handleDefine() {
     lastResult = undefined
-    const resp = (await define.mutateAsync(
-      toCommandArgs(defineFrame(name, method)),
-    )) as unknown as DefineFrameResponse
-    lastResult = resp
-    if (resp.committed) {
-      name = ''
+    try {
+      const resp = (await define.mutateAsync(
+        toCommandArgs(defineFrame(name, method)),
+      )) as unknown as DefineFrameResponse
+      lastResult = resp
+      if (resp.committed) {
+        name = ''
+        // define_frame clears the server-side capture buffer on success;
+        // let CapturePanel know so it doesn't keep showing stale points.
+        bumpCaptureBuffer()
+      }
+      await frames.refetch()
+    } catch {
+      // Surfaced via define.error in the template; swallow here so the
+      // rejection doesn't bubble up as an unhandled promise rejection.
     }
-    await frames.refetch()
   }
 
   async function handleDelete(frameName: string) {
-    await del.mutateAsync(toCommandArgs(deleteFrame(frameName)))
-    await frames.refetch()
+    try {
+      await del.mutateAsync(toCommandArgs(deleteFrame(frameName)))
+      await frames.refetch()
+    } catch {
+      // Surfaced via del.error in the template.
+    }
   }
 
   async function handleClearAll() {
-    await clearAll.mutateAsync(toCommandArgs(clearFrames()))
-    await frames.refetch()
+    try {
+      await clearAll.mutateAsync(toCommandArgs(clearFrames()))
+      await frames.refetch()
+    } catch {
+      // Surfaced via clearAll.error in the template.
+    }
   }
 
   function fmt(n: number): string {

@@ -37,30 +37,46 @@
   const disabled = $derived(!armState.hasArm)
 
   async function handleCapture() {
-    await capture.mutateAsync(toCommandArgs(captureTcpPoint()))
-    await buffer.refetch()
+    try {
+      await capture.mutateAsync(toCommandArgs(captureTcpPoint()))
+      await buffer.refetch()
+    } catch {
+      // Surfaced via capture.error in the template.
+    }
   }
 
   async function handleClear() {
-    await clear.mutateAsync(toCommandArgs(clearTcpBuffer()))
-    await buffer.refetch()
+    try {
+      await clear.mutateAsync(toCommandArgs(clearTcpBuffer()))
+      await buffer.refetch()
+    } catch {
+      // Surfaced via clear.error in the template.
+    }
   }
 
   async function handleTeachPosition() {
     positionResult = undefined
-    const resp = (await teachPosition.mutateAsync(
-      toCommandArgs(teachTcpPosition()),
-    )) as unknown as TeachTcpPositionResponse
-    positionResult = resp
-    await buffer.refetch()
+    try {
+      const resp = (await teachPosition.mutateAsync(
+        toCommandArgs(teachTcpPosition()),
+      )) as unknown as TeachTcpPositionResponse
+      positionResult = resp
+      await buffer.refetch()
+    } catch {
+      // Surfaced via teachPosition.error in the template.
+    }
   }
 
   async function handleTeachOrientation() {
     orientationResult = undefined
-    const resp = (await teachOrientation.mutateAsync(
-      toCommandArgs(teachTcpOrientation(oX, oY, oZ, theta)),
-    )) as unknown as TeachTcpOrientationResponse
-    orientationResult = resp
+    try {
+      const resp = (await teachOrientation.mutateAsync(
+        toCommandArgs(teachTcpOrientation(oX, oY, oZ, theta)),
+      )) as unknown as TeachTcpOrientationResponse
+      orientationResult = resp
+    } catch {
+      // Surfaced via teachOrientation.error in the template.
+    }
   }
 
   function fmt(n: number): string {

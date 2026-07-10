@@ -27,11 +27,23 @@
   const disabled = $derived(!armState.hasArm || jog.isPending || motion.busy > 0)
 
   function cartesian(axis: CartesianAxis, step: number) {
-    void withMove(() => jog.mutateAsync(toCommandArgs(jogCartesian(axis, step))))
+    void withMove(async () => {
+      try {
+        await jog.mutateAsync(toCommandArgs(jogCartesian(axis, step)))
+      } catch {
+        // Surfaced via jog.error in the template.
+      }
+    })
   }
 
   function joint(index: number, step: number) {
-    void withMove(() => jog.mutateAsync(toCommandArgs(jogJoint(index, step))))
+    void withMove(async () => {
+      try {
+        await jog.mutateAsync(toCommandArgs(jogJoint(index, step)))
+      } catch {
+        // Surfaced via jog.error in the template.
+      }
+    })
   }
 </script>
 

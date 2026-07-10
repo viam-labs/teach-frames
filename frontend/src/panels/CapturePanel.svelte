@@ -2,6 +2,7 @@
   import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
   import { useMachineId } from '../lib/machine'
+  import { captureBufferSignal } from '../lib/captureBuffer.svelte'
   import { capturePoint, clearBuffer, getBuffer, toCommandArgs, type BufferResponse } from '../lib/poseTracker'
 
   const machineId = useMachineId()
@@ -13,14 +14,31 @@
 
   const points = $derived((buffer.data as BufferResponse | undefined)?.points ?? [])
 
+  // Other panels (e.g. FramePanel after a successful define) can clear the
+  // server-side buffer out from under us. Refetch whenever that signal bumps
+  // so we don't keep displaying points the server already discarded.
+  $effect(() => {
+    // Read .version so this effect tracks the signal; the value itself is unused.
+    const _version = captureBufferSignal.version
+    void buffer.refetch()
+  })
+
   async function handleCapture() {
-    await capture.mutateAsync(toCommandArgs(capturePoint()))
-    await buffer.refetch()
+    try {
+      await capture.mutateAsync(toCommandArgs(capturePoint()))
+      await buffer.refetch()
+    } catch {
+      // Surfaced via capture.error in the template.
+    }
   }
 
   async function handleClear() {
-    await clear.mutateAsync(toCommandArgs(clearBuffer()))
-    await buffer.refetch()
+    try {
+      await clear.mutateAsync(toCommandArgs(clearBuffer()))
+      await buffer.refetch()
+    } catch {
+      // Surfaced via clear.error in the template.
+    }
   }
 
   function fmt(n: number): string {

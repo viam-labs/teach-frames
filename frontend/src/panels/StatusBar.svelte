@@ -16,11 +16,14 @@
   const pt = poseTrackerClient(machineId)
 
   // Live arm-state poll: 500ms, paused while a jog/move is in flight so the
-  // poll doesn't race the in-flight command's own state mutation.
+  // poll doesn't race the in-flight command's own state mutation. Also paused
+  // once we know there's no arm configured — the initial query still runs (so
+  // we can detect that condition), but polling every 500ms an endpoint that
+  // will only ever error is pointless churn.
   const armStateQuery = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getArmState()))
   usePolling(
     () => armStateQuery.queryKey,
-    () => (motion.busy > 0 ? false : 500),
+    () => (noArmConfigured || motion.busy > 0 ? false : 500),
   )
 
   // Stop is intentionally its own mutation (not `withMove`) — it must be
@@ -73,7 +76,9 @@
   function handleStop() {
     // Fire-and-forget from the click handler's perspective; the mutation's
     // own pending/error state drives the button label and any error text.
-    void stop.mutateAsync(toCommandArgs(stopArm()))
+    // `.mutate` (not `.mutateAsync`) so a rejected command surfaces via
+    // `stop.error` without producing an unhandled promise rejection.
+    stop.mutate(toCommandArgs(stopArm()))
   }
 
   function fmt(n: number | undefined): string {
