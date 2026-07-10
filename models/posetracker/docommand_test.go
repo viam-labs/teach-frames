@@ -795,3 +795,50 @@ func TestJogJointNoArm(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldNotBeNil)
 }
+
+func TestJogCartesianTranslation(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	// non-identity orientation to prove translation is world-frame (not rotated by tool orientation)
+	startOri := &spatialmath.EulerAngles{Yaw: math.Pi / 2}
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPose(r3.Vector{X: 10, Y: 20, Z: 30}, startOri), nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 15.0) // 10+5 world-frame
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 20.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 30.0)
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), startOri), test.ShouldBeTrue)
+}
+
+func TestJogCartesianNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestJogCartesianUnknownAxis(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, &spatialmath.EulerAngles{}), nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "bogus", "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
