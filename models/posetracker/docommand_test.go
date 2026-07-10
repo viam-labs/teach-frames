@@ -447,6 +447,69 @@ func TestDeleteFrameMissingName(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 }
 
+// --- capture_tcp_point / get_tcp_buffer / clear_tcp_buffer tests ---
+
+func TestCaptureTCPPoint(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = &posesource.FakeFlange{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}),
+	}}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["index"], test.ShouldEqual, 0)
+	test.That(t, resp["buffer_len"], test.ShouldEqual, 1)
+}
+
+func TestCaptureTCPPointNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestGetTCPBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = &posesource.FakeFlange{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1}),
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 2}),
+	}}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_tcp_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	points, ok := resp["points"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(points), test.ShouldEqual, 2)
+}
+
+func TestClearTCPBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.flange = &posesource.FakeFlange{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 1}),
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 2}),
+	}}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(context.Background(), map[string]interface{}{"capture_tcp_point": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_tcp_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["cleared"], test.ShouldEqual, 2)
+
+	resp, err = pt.DoCommand(context.Background(), map[string]interface{}{"get_tcp_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	points, ok := resp["points"].([]interface{})
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, len(points), test.ShouldEqual, 0)
+}
+
 // TestDefineFrameThreePointCollinear verifies that collinear points produce an
 // error, leave the buffer intact, and do not commit any frame to the store.
 func TestDefineFrameThreePointCollinear(t *testing.T) {

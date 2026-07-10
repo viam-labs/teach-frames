@@ -17,6 +17,9 @@ import (
 //	{"capture_point": {}}                                    — read the current TCP pose and append it to the capture buffer.
 //	{"get_buffer": {}}                                       — return all poses currently in the capture buffer.
 //	{"clear_buffer": {}}                                     — empty the capture buffer and return the count removed.
+//	{"capture_tcp_point": {}}                                — read the current arm flange pose and append it to the TCP capture buffer (errors if no arm is configured).
+//	{"get_tcp_buffer": {}}                                   — return all poses currently in the TCP capture buffer.
+//	{"clear_tcp_buffer": {}}                                 — empty the TCP capture buffer and return the count removed.
 //	{"define_frame": {"name": "<n>", "method": "<m>"}}       — compute a frame from the buffer (methods: 3point|point|tcp_snapshot), persist it, and clear the buffer.
 //	{"list_frames": {}}                                      — return all currently committed frames.
 //	{"delete_frame": {"name": "<n>"}}                        — remove a single named frame and persist the updated set.
@@ -49,6 +52,32 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "clear_buffer"):
 		return map[string]interface{}{"cleared": pt.store.ClearBuffer()}, nil
+
+	case has(cmd, "capture_tcp_point"):
+		if pt.flange == nil {
+			return nil, errors.New("arm dependency not configured; cannot capture TCP point")
+		}
+		pose, err := pt.flange.CaptureFlange(ctx)
+		if err != nil {
+			return nil, err
+		}
+		idx := pt.store.AddTCPCapture(pose)
+		return map[string]interface{}{
+			"index":      idx,
+			"buffer_len": pt.store.TCPBufferLen(),
+			"pose":       poseToMap(pose),
+		}, nil
+
+	case has(cmd, "get_tcp_buffer"):
+		buf := pt.store.TCPBuffer()
+		pts := make([]interface{}, len(buf))
+		for i, p := range buf {
+			pts[i] = poseToMap(p)
+		}
+		return map[string]interface{}{"points": pts}, nil
+
+	case has(cmd, "clear_tcp_buffer"):
+		return map[string]interface{}{"cleared": pt.store.ClearTCPBuffer()}, nil
 
 	case has(cmd, "define_frame"):
 		return pt.defineFrame(ctx, cmd["define_frame"])
