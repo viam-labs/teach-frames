@@ -29,7 +29,12 @@ export function currentMachine(): MachineIdentity {
   if (!raw) {
     throw new Error(`no Viam credentials cookie for machine ${id}`)
   }
-  const cookie = JSON.parse(raw) as MachineCookie
+  let cookie: MachineCookie
+  try {
+    cookie = JSON.parse(raw) as MachineCookie
+  } catch {
+    throw new Error(`no valid Viam credentials cookie for machine ${id}`)
+  }
   return {
     id,
     dialConf: {
