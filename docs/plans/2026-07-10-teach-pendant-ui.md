@@ -259,10 +259,12 @@ git commit -m "feat(pose-tracker): add stop_arm DoCommand"
 
 **Step 1: Write the failing test**
 
+> **NOTE (verified against RDK v0.131.0):** `referenceframe.Input` is a type alias `type Input = float64` — NOT a struct with a `.Value` field. Joint slices are plain `[]float64` (radians). Use `[]referenceframe.Input{0, 0, 0}` and `moved[1]` directly.
+
 ```go
 func TestJogJoint(t *testing.T) {
 	injArm := inject.NewArm("my-arm")
-	start := []referenceframe.Input{{Value: 0}, {Value: 0}, {Value: 0}}
+	start := []referenceframe.Input{0, 0, 0}
 	var moved []referenceframe.Input
 	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
 		return start, nil
@@ -271,7 +273,7 @@ func TestJogJoint(t *testing.T) {
 		moved = p
 		return nil
 	}
-	pt := newTestTrackerNoArm(t)
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	pt.arm = injArm
 
 	// jog joint 1 by +90 degrees
@@ -279,8 +281,8 @@ func TestJogJoint(t *testing.T) {
 		"jog_joint": map[string]interface{}{"joint": 1.0, "step": 90.0},
 	})
 	test.That(t, err, test.ShouldBeNil)
-	test.That(t, moved[1].Value, test.ShouldAlmostEqual, math.Pi/2) // +90deg in radians
-	test.That(t, moved[0].Value, test.ShouldAlmostEqual, 0.0)
+	test.That(t, moved[1], test.ShouldAlmostEqual, math.Pi/2) // +90deg in radians
+	test.That(t, moved[0], test.ShouldAlmostEqual, 0.0)
 	joints := resp["joints"].([]float64)
 	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0)
 
@@ -335,7 +337,7 @@ func (pt *teachTracker) jogJoint(ctx context.Context, raw interface{}) (map[stri
 	}
 	next := make([]referenceframe.Input, len(cur))
 	copy(next, cur)
-	next[joint] = referenceframe.Input{Value: cur[joint].Value + step*math.Pi/180.0}
+	next[joint] = cur[joint] + step*math.Pi/180.0 // Input is a float64 alias (radians)
 
 	if err := pt.arm.MoveToJointPositions(ctx, next, nil); err != nil {
 		return nil, err
