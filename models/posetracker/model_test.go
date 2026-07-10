@@ -249,3 +249,23 @@ func TestNewPoseTrackerArmUnresolvableWarnsAndContinues(t *testing.T) {
 	test.That(t, tt.armName, test.ShouldEqual, "my-arm")
 	test.That(t, tt.flange, test.ShouldBeNil)
 }
+
+// TestNewPoseTrackerWithArmStoresArm verifies the raw arm is retained for jogging.
+func TestNewPoseTrackerWithArmStoresArm(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	injArm := inject.NewArm("my-arm")
+	deps := resource.Dependencies{
+		motionName:          injectmotion.NewMotionService(defaultMotionService),
+		arm.Named("my-arm"): injArm,
+	}
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "tool", Arm: "my-arm"},
+	}
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+	tt := res.(*teachTracker)
+	test.That(t, tt.arm, test.ShouldEqual, injArm)
+}
