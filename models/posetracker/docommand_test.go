@@ -842,3 +842,33 @@ func TestJogCartesianUnknownAxis(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldNotBeNil)
 }
+
+func TestJogCartesianRotationToolFrame(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	startOri := &spatialmath.EulerAngles{Roll: math.Pi / 2}
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, startOri), nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	// pure rotation: position unchanged
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 1.0)
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 2.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 3.0)
+
+	// orientation == tool-frame compose (right-multiply) of a 30deg yaw
+	delta := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: 30 * math.Pi / 180})
+	expected := spatialmath.Compose(spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, startOri), delta)
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+}

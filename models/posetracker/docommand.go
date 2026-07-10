@@ -496,7 +496,18 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 	case "z":
 		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{Z: step}), cur.Orientation())
 	case "roll", "pitch", "yaw":
-		return nil, errors.New("rotation jog not yet implemented")
+		rad := step * math.Pi / 180.0
+		var delta *spatialmath.EulerAngles
+		switch axis {
+		case "roll":
+			delta = &spatialmath.EulerAngles{Roll: rad}
+		case "pitch":
+			delta = &spatialmath.EulerAngles{Pitch: rad}
+		case "yaw":
+			delta = &spatialmath.EulerAngles{Yaw: rad}
+		}
+		// Tool-frame rotation: right-multiply current pose by the delta (zero translation preserves the point).
+		next = spatialmath.Compose(cur, spatialmath.NewPoseFromOrientation(delta))
 	default:
 		return nil, fmt.Errorf("unknown jog axis %q (want x|y|z|roll|pitch|yaw)", axis)
 	}
