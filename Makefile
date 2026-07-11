@@ -16,8 +16,16 @@ $(BIN): Makefile $(shell find . -type f -name '*.go')
 module: $(BIN) frontend
 	tar -czf $(TARBALL) $(BIN) meta.json frontend/dist
 
+# Build the bundled Svelte app. In local dev `npm` is already on PATH. In the
+# Viam cloud build it is not — setup.sh installs Node via mise, but the build
+# step runs in a fresh shell where mise is not activated, so fall back to mise's
+# shims (and mise itself) when npm is missing.
 frontend:
-	cd frontend && npm ci && npm run build
+	cd frontend && \
+	if ! command -v npm >/dev/null 2>&1 && [ -d "$(HOME)/.local/share/mise/shims" ]; then \
+		export PATH="$(HOME)/.local/share/mise/shims:$(HOME)/.local/bin:$$PATH"; \
+	fi; \
+	npm ci && npm run build
 
 lint:
 	go vet ./...

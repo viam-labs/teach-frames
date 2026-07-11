@@ -26,6 +26,7 @@
   ],
   "entrypoint": "bin/teach-frames",
   "build": {
+    "setup": "./setup.sh",
     "build": "make module",
     "path": "bin/module.tar.gz",
     "arch": [
