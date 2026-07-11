@@ -64,9 +64,9 @@
     flex-direction: column;
     gap: 0.75rem;
     padding: 1.75rem;
-    background: var(--panel-bg, #1c1f26);
-    border: 1px solid var(--panel-border, #333);
-    border-radius: 0.75rem;
+    background: var(--surface-panel);
+    border: 1px solid var(--border-panel);
+    border-radius: var(--radius-xl);
   }
 
   h1 {
@@ -76,21 +76,21 @@
 
   .lead {
     margin: 0;
-    color: #c8ccd2;
+    color: var(--ink-secondary);
   }
 
   label {
     font-size: 0.9rem;
-    color: #c8ccd2;
+    color: var(--ink-secondary);
     margin-top: 0.25rem;
   }
 
   select {
     min-height: 44px;
     padding: 0.5rem 0.6rem;
-    border-radius: 0.4rem;
-    border: 1px solid var(--control-border, #444);
-    background: var(--control-bg, #2a2e37);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-control);
+    background: var(--surface-control);
     color: inherit;
     font-size: 1rem;
   }
@@ -99,10 +99,10 @@
     min-height: 44px;
     margin-top: 0.5rem;
     padding: 0.6rem 1.1rem;
-    border-radius: 0.4rem;
+    border-radius: var(--radius-md);
     border: none;
-    background: var(--control-active-bg, #3d6bff);
-    color: #fff;
+    background: var(--accent);
+    color: var(--ink-on-accent);
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
@@ -115,20 +115,20 @@
 
   .muted {
     margin: 0;
-    color: #9aa0a6;
+    color: var(--ink-muted);
     font-style: italic;
   }
 
   .hint {
     margin: 0;
     font-size: 0.85rem;
-    color: #9aa0a6;
+    color: var(--ink-muted);
   }
 
   code {
-    background: #12141a;
+    background: var(--surface-base);
     padding: 0.1rem 0.3rem;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
     font-size: 0.85em;
   }
 </style>

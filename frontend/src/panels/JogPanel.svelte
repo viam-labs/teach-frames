@@ -124,19 +124,25 @@
   const jogHold: Action<HTMLButtonElement, () => Record<string, unknown>> = (node, build) => {
     let current = build
 
+    // Reflect the held state on the button itself — the operator should see the
+    // key engage while the arm jogs, not just watch numbers move in the readout.
+    // Driven by the hold loop's lifetime (via .finally) so it also clears when
+    // STOP ends the loop mid-press, not only on pointer/key release.
     function onPointerDown(event: PointerEvent) {
       if (node.disabled) {
         return
       }
       node.setPointerCapture(event.pointerId)
-      void startHold(current)
+      node.classList.add('holding')
+      void startHold(current).finally(() => node.classList.remove('holding'))
     }
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Enter' && event.key !== ' ') {
         return
       }
       event.preventDefault() // suppress the synthetic click so we don't double-send
-      void startHold(current)
+      node.classList.add('holding')
+      void startHold(current).finally(() => node.classList.remove('holding'))
     }
     function onKeyUp(event: KeyboardEvent) {
       if (event.key === 'Enter' || event.key === ' ') {
@@ -171,8 +177,11 @@
 </script>
 
 <section class="jog-panel">
-  <header>
-    <h2>Jog</h2>
+  <header class="panel-header">
+    <div class="panel-titles">
+      <h2>Jog</h2>
+      <p class="panel-subtitle">Move the arm to position it for capture.</p>
+    </div>
     <div class="mode-toggle" role="group" aria-label="Jog mode">
       <button type="button" class:active={mode === 'cartesian'} onclick={() => (mode = 'cartesian')}>
         Cartesian
@@ -332,19 +341,6 @@
     }
   }
 
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 1.15rem;
-  }
-
   .mode-toggle {
     display: flex;
     gap: 0.5rem;
@@ -354,18 +350,18 @@
   .step-options button {
     min-height: 44px;
     padding: 0.4rem 1rem;
-    border-radius: 0.4rem;
-    border: 1px solid var(--control-border, #444);
-    background: var(--control-bg, #2a2e37);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-control);
+    background: var(--surface-control);
     color: inherit;
     cursor: pointer;
   }
 
   .mode-toggle button.active,
   .step-options button.active {
-    background: var(--control-active-bg, #3d6bff);
-    border-color: var(--control-active-bg, #3d6bff);
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--ink-on-accent);
   }
 
   .step-group {
@@ -376,7 +372,7 @@
 
   .step-label {
     font-size: 0.85rem;
-    opacity: 0.8;
+    color: var(--ink-muted);
   }
 
   .step-options {
@@ -398,7 +394,7 @@
   }
 
   .axis-name {
-    width: 3.5rem;
+    width: 4rem;
     font-weight: 600;
   }
 
@@ -406,11 +402,22 @@
     min-width: 44px;
     min-height: 44px;
     font-size: 1.3rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--control-border, #444);
-    background: var(--control-bg, #2a2e37);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-control);
+    background: var(--surface-control);
     color: inherit;
     cursor: pointer;
+  }
+
+  /* Held / pressed: the key fills with accent and sinks slightly, so an
+     engaged jog is unmistakable at a glance. `.holding` tracks the jog loop;
+     `:active` covers the instant of press before the loop reports back. */
+  .axis-row button:global(.holding),
+  .axis-row button:active:not(:disabled) {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--ink-on-accent);
+    transform: translateY(1px);
   }
 
   .axis-row button:disabled {
@@ -421,9 +428,9 @@
   .readout {
     width: 100%;
     border-collapse: collapse;
-    background: #12141a;
-    border: 1px solid var(--control-border, #333);
-    border-radius: 0.5rem;
+    background: var(--surface-base);
+    border: 1px solid var(--border-panel);
+    border-radius: var(--radius-lg);
     overflow: hidden;
     font-variant-numeric: tabular-nums;
     font-size: 0.9rem;
@@ -435,10 +442,10 @@
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #9aa0a6;
+    color: var(--ink-muted);
     padding: 0.4rem 0.75rem;
-    border-bottom: 1px solid var(--control-border, #333);
-    background: #171a21;
+    border-bottom: 1px solid var(--border-panel);
+    background: var(--surface-header);
   }
 
   .readout thead th:last-child {
@@ -448,19 +455,19 @@
   .readout tbody th {
     text-align: left;
     font-weight: 600;
-    color: #e6e8eb;
+    color: var(--ink);
     width: 5rem;
   }
 
   .readout tbody td {
     text-align: right;
-    color: #c8ccd2;
+    color: var(--ink-secondary);
   }
 
   .readout tbody th,
   .readout tbody td {
     padding: 0.3rem 0.75rem;
-    border-bottom: 1px solid #23262e;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .readout tbody tr:last-child th,
@@ -470,12 +477,12 @@
 
   .readout .unit {
     margin-left: 0.35rem;
-    color: #7c828a;
+    color: var(--ink-faint);
     font-size: 0.8em;
   }
 
   .error {
-    color: #ff8080;
+    color: var(--error-text);
     font-size: 0.85rem;
   }
 </style>

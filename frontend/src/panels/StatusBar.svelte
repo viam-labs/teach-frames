@@ -44,7 +44,7 @@
   }
 </script>
 
-<div class="status-bar">
+<header class="status-bar">
   <div class="connection">
     <span class="dot {connectionClass}"></span>
     <span>{connectionLabel}</span>
@@ -62,7 +62,7 @@
       <span class="error">{stop.error.message}</span>
     {/if}
   </div>
-</div>
+</header>
 
 <style>
   .status-bar {
@@ -70,9 +70,9 @@
     align-items: center;
     gap: 1.25rem;
     padding: 0.75rem 1rem;
-    background: var(--panel-bg, #1c1f26);
-    color: var(--panel-fg, #f2f2f2);
-    border-bottom: 1px solid var(--panel-border, #333);
+    background: var(--surface-panel);
+    color: var(--ink);
+    border-bottom: 1px solid var(--border-panel);
     flex-wrap: wrap;
   }
 
@@ -88,22 +88,22 @@
     width: 0.65rem;
     height: 0.65rem;
     border-radius: 50%;
-    background: #999;
+    background: var(--ink-muted);
     flex-shrink: 0;
   }
 
   .dot.connected {
-    background: #3ecf6a;
+    background: var(--success);
   }
 
   .dot.not-connected {
-    background: #d94f4f;
+    background: var(--status-offline);
   }
 
   .resource {
     flex: 1;
     min-width: 0;
-    color: #c8ccd2;
+    color: var(--ink-secondary);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     overflow: hidden;
@@ -123,15 +123,15 @@
     font-size: 1.1rem;
     font-weight: 800;
     letter-spacing: 0.04em;
-    color: #fff;
-    background: #c62828;
+    color: var(--ink-on-accent);
+    background: var(--danger);
     border: none;
-    border-radius: 0.5rem;
+    border-radius: var(--radius-lg);
     cursor: pointer;
   }
 
   .stop:hover:not(:disabled) {
-    background: #e53935;
+    background: var(--danger-hover);
   }
 
   .stop:disabled {
@@ -140,7 +140,7 @@
   }
 
   .error {
-    color: #ff8080;
+    color: var(--error-text);
     font-size: 0.85rem;
   }
 </style>

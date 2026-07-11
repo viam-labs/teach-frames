@@ -1,0 +1,56 @@
+/*
+ * Design tokens — the teach-pendant's single source of truth for color and
+ * radius. Imported once in main.ts so every component's scoped <style> can
+ * reference these without redeclaring hex values.
+ *
+ * The app is a dark instrument UI embedded in the Viam app: one theme, tuned
+ * for a shop-floor screen. Values are the project's committed colors, kept
+ * exact so tokenizing changed nothing visually.
+ *
+ * Naming: `--surface-*` = backgrounds by elevation, `--ink-*` = text by
+ * prominence, `--border-*` = dividers/outlines, plus semantic accent/status.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — deepest to most raised */
+  --surface-base: #12141a; /* app background; inset readouts; code */
+  --surface-panel: #1c1f26; /* panels, status bar, onboarding card */
+  --surface-control: #2a2e37; /* inputs, selects, secondary buttons */
+  --surface-header: #171a21; /* readout table header row */
+
+  /* Ink — text by prominence (all AA on --surface-panel / --surface-base) */
+  --ink: #f2f2f2; /* primary text, headings, readout row labels */
+  --ink-secondary: #c8ccd2; /* table data, leads, field labels */
+  --ink-muted: #9aa0a6; /* subtitles, empty states, hints, idle status dot */
+  --ink-faint: #7c828a; /* readout units */
+  --ink-on-accent: #ffffff; /* text over accent / danger fills */
+
+  /* Accent — primary actions and current selection */
+  --accent: #3d6bff;
+  --focus-ring: #6f9bff; /* lighter than accent: ≥3:1 on every surface, and stays visible over the accent fill on a held jog key */
+
+  /* Status */
+  --danger: #c62828; /* STOP action */
+  --danger-hover: #e53935;
+  --success: #3ecf6a; /* success messages, connected indicator */
+  --warning: #d9a441; /* unavailable / needs-attention notices */
+  --status-offline: #d94f4f; /* disconnected indicator */
+  --error-text: #ff8080; /* inline error copy */
+
+  /* Borders */
+  --border-panel: #333333; /* panel edges, table/readout dividers */
+  --border-control: #444444; /* control outlines: buttons, inputs, fieldset */
+  --border-subtle: #23262e; /* faint readout row dividers */
+
+  /* Radii */
+  --radius-sm: 0.25rem; /* inline code */
+  --radius-md: 0.4rem; /* controls: buttons, inputs, selects */
+  --radius-lg: 0.5rem; /* jog keys, readout, STOP */
+  --radius-xl: 0.75rem; /* panels, onboarding card */
+
+  /* Motion — restrained, state-conveying only. No page-load choreography. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --transition-fast: 130ms; /* control feedback: hover, selection, press, enable/disable */
+}

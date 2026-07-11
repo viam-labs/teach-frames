@@ -94,34 +94,36 @@
   {#if points.length === 0}
     <p class="panel-empty">No points captured yet.</p>
   {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>X</th>
-          <th>Y</th>
-          <th>Z</th>
-          <th>O&#8339;</th>
-          <th>O&#8340;</th>
-          <th>O&#8342;</th>
-          <th>&#952;</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each points as point, i (i)}
+    <div class="table-scroll">
+      <table>
+        <thead>
           <tr>
-            <td>{i}</td>
-            <td>{fmt(point.x)}</td>
-            <td>{fmt(point.y)}</td>
-            <td>{fmt(point.z)}</td>
-            <td>{fmt(point.o_x)}</td>
-            <td>{fmt(point.o_y)}</td>
-            <td>{fmt(point.o_z)}</td>
-            <td>{fmt(point.theta)}</td>
+            <th>#</th>
+            <th>X</th>
+            <th>Y</th>
+            <th>Z</th>
+            <th>O&#8339;</th>
+            <th>O&#8340;</th>
+            <th>O&#8342;</th>
+            <th>&#952;</th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each points as point, i (i)}
+            <tr>
+              <td>{i}</td>
+              <td>{fmt(point.x)}</td>
+              <td>{fmt(point.y)}</td>
+              <td>{fmt(point.z)}</td>
+              <td>{fmt(point.o_x)}</td>
+              <td>{fmt(point.o_y)}</td>
+              <td>{fmt(point.o_z)}</td>
+              <td>{fmt(point.theta)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </section>
 
@@ -129,22 +131,22 @@
   .capture-panel {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 1rem;
     padding: 1rem;
   }
 
   button {
     min-height: 44px;
     padding: 0.5rem 1.1rem;
-    border-radius: 0.4rem;
-    border: 1px solid var(--control-border, #444);
-    background: var(--control-active-bg, #3d6bff);
-    color: #fff;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-control);
+    background: var(--accent);
+    color: var(--ink-on-accent);
     cursor: pointer;
   }
 
   button.secondary {
-    background: var(--control-bg, #2a2e37);
+    background: var(--surface-control);
     color: inherit;
   }
 
@@ -164,7 +166,7 @@
   td {
     padding: 0.35rem 0.6rem;
     text-align: right;
-    border-bottom: 1px solid var(--control-border, #333);
+    border-bottom: 1px solid var(--border-panel);
   }
 
   th:first-child,
@@ -173,7 +175,7 @@
   }
 
   .error {
-    color: #ff8080;
+    color: var(--error-text);
     font-size: 0.85rem;
   }
 </style>

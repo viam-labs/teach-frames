@@ -30,6 +30,13 @@
     point: 'requires 1 captured point',
     tcp_snapshot: 'requires 1 captured point (used as-is)',
   }
+  // Human-readable labels for the raw method tokens the API expects. The token
+  // stays the radio value; only the visible text changes.
+  const METHOD_LABELS: Record<FrameMethod, string> = {
+    '3point': '3-point',
+    point: 'Single point',
+    tcp_snapshot: 'TCP snapshot',
+  }
   const METHODS: FrameMethod[] = ['3point', 'point', 'tcp_snapshot']
 
   let name = $state('')
@@ -37,6 +44,17 @@
   let lastResult: DefineFrameResponse | undefined = $state(undefined)
 
   const frameEntries = $derived(Object.entries((frames.data as FramesResponse | undefined)?.frames ?? {}))
+
+  const trimmedName = $derived(name.trim())
+  // Defining with an existing name overwrites it. Surface that BEFORE the user
+  // commits, instead of only reporting "replaced" after the fact.
+  const willReplace = $derived(frameEntries.some(([n]) => n === trimmedName))
+
+  // Delete and Clear-all persist to config and can't be undone, so they arm an
+  // inline confirmation instead of firing on the first click.
+  type PendingConfirm = { kind: 'delete' | 'clearAll'; name?: string } | null
+  let pendingConfirm = $state<PendingConfirm>(null)
+  const confirmBusy = $derived(del.isPending || clearAll.isPending)
 
   async function handleDefine() {
     lastResult = undefined
@@ -58,22 +76,28 @@
     }
   }
 
-  async function handleDelete(frameName: string) {
+  // Runs the armed destructive action. Leaves the confirmation open on failure
+  // (the error shows below it) so the user can retry or cancel.
+  async function runConfirm() {
+    const c = pendingConfirm
+    if (!c) return
     try {
-      await del.mutateAsync(toCommandArgs(deleteFrame(frameName)))
+      if (c.kind === 'delete') {
+        if (!c.name) return
+        await del.mutateAsync(toCommandArgs(deleteFrame(c.name)))
+      } else {
+        await clearAll.mutateAsync(toCommandArgs(clearFrames()))
+      }
       await frames.refetch()
+      pendingConfirm = null
     } catch {
-      // Surfaced via del.error in the template.
+      // Surfaced via del.error / clearAll.error in the template.
     }
   }
 
-  async function handleClearAll() {
-    try {
-      await clearAll.mutateAsync(toCommandArgs(clearFrames()))
-      await frames.refetch()
-    } catch {
-      // Surfaced via clearAll.error in the template.
-    }
+  // Land keyboard focus on the safe (Cancel) button when the confirmation opens.
+  function focusOnMount(node: HTMLElement) {
+    node.focus()
   }
 
   function fmt(n: number): string {
@@ -92,7 +116,12 @@
   <div class="define-form">
     <label>
       <span>Name</span>
-      <input type="text" bind:value={name} placeholder="frame name" />
+      <input
+        type="text"
+        bind:value={name}
+        placeholder="frame name"
+        oninput={() => (lastResult = undefined)}
+      />
     </label>
 
     <fieldset>
@@ -100,15 +129,25 @@
       {#each METHODS as m (m)}
         <label class="method-option">
           <input type="radio" name="method" value={m} bind:group={method} />
-          <span>{m}</span>
+          <span>{METHOD_LABELS[m]}</span>
           <span class="hint">({METHOD_HINTS[m]})</span>
         </label>
       {/each}
     </fieldset>
 
-    <button type="button" onclick={handleDefine} disabled={define.isPending || name.trim() === ''}>
-      {define.isPending ? 'Defining…' : 'Define'}
+    <button type="button" onclick={handleDefine} disabled={define.isPending || trimmedName === ''}>
+      {#if define.isPending}
+        {willReplace ? 'Replacing…' : 'Defining…'}
+      {:else if willReplace}
+        Replace "{trimmedName}"
+      {:else}
+        Define
+      {/if}
     </button>
+
+    {#if willReplace && !define.isPending}
+      <p class="panel-warning">A frame named "{trimmedName}" already exists — defining will replace it.</p>
+    {/if}
 
     {#if define.error}
       <p class="error">{define.error.message}</p>
@@ -132,12 +171,42 @@
       <button
         type="button"
         class="secondary"
-        onclick={handleClearAll}
-        disabled={clearAll.isPending || frameEntries.length === 0}
+        onclick={() => (pendingConfirm = { kind: 'clearAll' })}
+        disabled={confirmBusy || frameEntries.length === 0}
       >
         Clear all
       </button>
     </div>
+
+    {#if pendingConfirm}
+      <div class="confirm-bar" role="alert">
+        <p>
+          {#if pendingConfirm.kind === 'delete'}
+            Delete frame "{pendingConfirm.name}"? This can't be undone.
+          {:else}
+            Clear all {frameEntries.length} frames? This can't be undone.
+          {/if}
+        </p>
+        <div class="confirm-actions">
+          <button type="button" class="danger" onclick={runConfirm} disabled={confirmBusy}>
+            {#if confirmBusy}
+              {pendingConfirm.kind === 'delete' ? 'Deleting…' : 'Clearing…'}
+            {:else}
+              {pendingConfirm.kind === 'delete' ? 'Delete' : 'Clear all'}
+            {/if}
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            onclick={() => (pendingConfirm = null)}
+            disabled={confirmBusy}
+            use:focusOnMount
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    {/if}
 
     {#if frames.error}
       <p class="error">{frames.error.message}</p>
@@ -152,32 +221,34 @@
     {#if frameEntries.length === 0}
       <p class="panel-empty">No frames defined yet.</p>
     {:else}
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>X</th>
-            <th>Y</th>
-            <th>Z</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each frameEntries as [frameName, pose] (frameName)}
+      <div class="table-scroll">
+        <table>
+          <thead>
             <tr>
-              <td>{frameName}</td>
-              <td>{fmt(pose.x)}</td>
-              <td>{fmt(pose.y)}</td>
-              <td>{fmt(pose.z)}</td>
-              <td>
-                <button type="button" class="secondary" onclick={() => handleDelete(frameName)} disabled={del.isPending}>
-                  Delete
-                </button>
-              </td>
+              <th>Name</th>
+              <th>X</th>
+              <th>Y</th>
+              <th>Z</th>
+              <th><span class="sr-only">Actions</span></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each frameEntries as [frameName, pose] (frameName)}
+              <tr>
+                <td>{frameName}</td>
+                <td>{fmt(pose.x)}</td>
+                <td>{fmt(pose.y)}</td>
+                <td>{fmt(pose.z)}</td>
+                <td>
+                  <button type="button" class="secondary" onclick={() => (pendingConfirm = { kind: 'delete', name: frameName })} disabled={confirmBusy} aria-label="Delete {frameName}">
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   </div>
 </section>
@@ -211,15 +282,15 @@
   input[type='text'] {
     min-height: 44px;
     padding: 0 0.6rem;
-    border-radius: 0.4rem;
-    border: 1px solid var(--control-border, #444);
-    background: var(--control-bg, #2a2e37);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-control);
+    background: var(--surface-control);
     color: inherit;
   }
 
   fieldset {
-    border: 1px solid var(--control-border, #444);
-    border-radius: 0.4rem;
+    border: 1px solid var(--border-control);
+    border-radius: var(--radius-md);
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
@@ -228,7 +299,7 @@
 
   legend {
     font-size: 0.8rem;
-    opacity: 0.8;
+    color: var(--ink-muted);
     padding: 0 0.3rem;
   }
 
@@ -241,29 +312,67 @@
   }
 
   .hint {
-    opacity: 0.7;
+    color: var(--ink-muted);
     font-size: 0.8rem;
   }
 
   button {
     min-height: 44px;
     padding: 0.5rem 1.1rem;
-    border-radius: 0.4rem;
-    border: 1px solid var(--control-border, #444);
-    background: var(--control-active-bg, #3d6bff);
-    color: #fff;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-control);
+    background: var(--accent);
+    color: var(--ink-on-accent);
     cursor: pointer;
     align-self: flex-start;
   }
 
   button.secondary {
-    background: var(--control-bg, #2a2e37);
+    background: var(--surface-control);
     color: inherit;
+  }
+
+  /* Destructive commit — the confirm button inside the confirmation bar. */
+  button.danger {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--ink-on-accent);
   }
 
   button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Inline confirmation for destructive, non-undoable actions — roomier and
+     clearer than cramming Confirm/Cancel into a table cell, no modal needed. */
+  .confirm-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    flex-wrap: wrap;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklab, var(--danger) 12%, var(--surface-panel));
+  }
+
+  .confirm-bar p {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  /* Divider between the define zone and the committed-frames zone, so the
+     panel reads as "define, then review" rather than two evenly-gapped peers. */
+  .frame-list {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-panel);
   }
 
   .list-header {
@@ -284,7 +393,7 @@
   td {
     padding: 0.35rem 0.6rem;
     text-align: right;
-    border-bottom: 1px solid var(--control-border, #333);
+    border-bottom: 1px solid var(--border-panel);
   }
 
   th:first-child,
@@ -293,12 +402,12 @@
   }
 
   .success {
-    color: #3ecf6a;
+    color: var(--success);
     font-size: 0.9rem;
   }
 
   .error {
-    color: #ff8080;
+    color: var(--error-text);
     font-size: 0.85rem;
   }
 </style>

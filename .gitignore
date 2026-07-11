@@ -3,3 +3,6 @@
 *.tar.gz
 .env
 /examples/
+
+# impeccable design-tooling working state (local)
+.impeccable/
