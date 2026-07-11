@@ -4,6 +4,7 @@
   import { poseTrackerClient } from '../lib/clients'
   import { useMachineId } from '../lib/machine'
   import { selectedResource } from '../lib/resource.svelte'
+  import { requestStop } from '../lib/motion.svelte'
   import { stopArm, toCommandArgs } from '../lib/poseTracker'
 
   const machineId = useMachineId()
@@ -35,8 +36,10 @@
   )
 
   function handleStop() {
-    // `.mutate` (not `.mutateAsync`) so a rejected command surfaces via
-    // `stop.error` without producing an unhandled promise rejection.
+    // Cancel any in-progress press-and-hold jog loop first, then command the
+    // arm to stop. `.mutate` (not `.mutateAsync`) so a rejected command
+    // surfaces via `stop.error` without an unhandled promise rejection.
+    requestStop()
     stop.mutate(toCommandArgs(stopArm()))
   }
 </script>

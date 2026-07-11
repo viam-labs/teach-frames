@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Action } from 'svelte/action'
   import { createResourceMutation, createResourceQuery, usePolling } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
   import { selectedResource } from '../lib/resource.svelte'
@@ -12,6 +13,7 @@
     parseArmState,
     toCommandArgs,
     type CartesianAxis,
+    type PoseMap,
   } from '../lib/poseTracker'
 
   const machineId = useMachineId()
@@ -73,26 +75,98 @@
   const TRANSLATION_AXES: CartesianAxis[] = ['x', 'y', 'z']
   const ROTATION_AXES: CartesianAxis[] = ['roll', 'pitch', 'yaw']
 
-  const disabled = $derived(!armState.hasArm || jog.isPending || motion.busy > 0)
+  // Jog buttons are gated only on arm presence. Overlap is prevented by the
+  // `holding` guard + single-pointer capture, NOT by disabling on motion.busy —
+  // disabling the held button mid-hold would abort the press-and-hold loop.
+  const disabled = $derived(!armState.hasArm)
 
-  function cartesian(axis: CartesianAxis, step: number) {
-    void withMove(async () => {
+  // Press-and-hold: while a jog button is held, send one jog, await it, and
+  // repeat. Awaiting each move paces the loop to the arm (no command stacking).
+  // A single `holding` flag guarantees only one loop runs at a time.
+  let holding = false
+
+  async function startHold(build: () => Record<string, unknown>) {
+    if (holding || !armState.hasArm) {
+      return
+    }
+    holding = true
+    // Capture the stop generation; if Stop is pressed mid-hold it bumps and we bail.
+    const seq = motion.stopSeq
+    await withMove(async () => {
       try {
-        await jog.mutateAsync(toCommandArgs(jogCartesian(axis, step)))
+        while (holding && armState.hasArm && motion.stopSeq === seq) {
+          const resp = (await jog.mutateAsync(toCommandArgs(build()))) as Record<string, unknown>
+          // Drive the readout live from the jog response (polling is paused
+          // while a move is in flight).
+          if (resp && typeof resp === 'object') {
+            if (resp.pose) {
+              armState.pose = resp.pose as PoseMap
+            }
+            if (Array.isArray(resp.joints)) {
+              armState.joints = resp.joints as number[]
+            }
+          }
+        }
       } catch {
-        // Surfaced via jog.error in the template.
+        // Surfaced via jog.error in the template; stop the loop.
       }
     })
+    holding = false
   }
 
-  function joint(index: number, step: number) {
-    void withMove(async () => {
-      try {
-        await jog.mutateAsync(toCommandArgs(jogJoint(index, step)))
-      } catch {
-        // Surfaced via jog.error in the template.
+  function stopHold() {
+    holding = false
+  }
+
+  // Action: press-and-hold (or hold Enter/Space) to jog repeatedly; release to
+  // stop. Pointer capture keeps the release reliable even if the pointer drifts
+  // off the button, and a window blur is a safety backstop.
+  const jogHold: Action<HTMLButtonElement, () => Record<string, unknown>> = (node, build) => {
+    let current = build
+
+    function onPointerDown(event: PointerEvent) {
+      if (node.disabled) {
+        return
       }
-    })
+      node.setPointerCapture(event.pointerId)
+      void startHold(current)
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return
+      }
+      event.preventDefault() // suppress the synthetic click so we don't double-send
+      void startHold(current)
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        stopHold()
+      }
+    }
+
+    node.addEventListener('pointerdown', onPointerDown)
+    node.addEventListener('pointerup', stopHold)
+    node.addEventListener('pointercancel', stopHold)
+    node.addEventListener('lostpointercapture', stopHold)
+    node.addEventListener('keydown', onKeyDown)
+    node.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', stopHold)
+
+    return {
+      update(next: () => Record<string, unknown>) {
+        current = next
+      },
+      destroy() {
+        node.removeEventListener('pointerdown', onPointerDown)
+        node.removeEventListener('pointerup', stopHold)
+        node.removeEventListener('pointercancel', stopHold)
+        node.removeEventListener('lostpointercapture', stopHold)
+        node.removeEventListener('keydown', onKeyDown)
+        node.removeEventListener('keyup', onKeyUp)
+        window.removeEventListener('blur', stopHold)
+        stopHold()
+      },
+    }
   }
 </script>
 
@@ -127,8 +201,8 @@
           {#each TRANSLATION_AXES as axis (axis)}
             <div class="axis-row">
               <span class="axis-name">{axis.toUpperCase()}</span>
-              <button type="button" {disabled} onclick={() => cartesian(axis, -transStep)}>−</button>
-              <button type="button" {disabled} onclick={() => cartesian(axis, transStep)}>+</button>
+              <button type="button" {disabled} use:jogHold={() => jogCartesian(axis, -transStep)} aria-label="{axis} minus">−</button>
+              <button type="button" {disabled} use:jogHold={() => jogCartesian(axis, transStep)} aria-label="{axis} plus">+</button>
             </div>
           {/each}
         </div>
@@ -148,8 +222,8 @@
           {#each ROTATION_AXES as axis (axis)}
             <div class="axis-row">
               <span class="axis-name">{axis[0]?.toUpperCase()}{axis.slice(1)}</span>
-              <button type="button" {disabled} onclick={() => cartesian(axis, -rotStep)}>−</button>
-              <button type="button" {disabled} onclick={() => cartesian(axis, rotStep)}>+</button>
+              <button type="button" {disabled} use:jogHold={() => jogCartesian(axis, -rotStep)} aria-label="{axis} minus">−</button>
+              <button type="button" {disabled} use:jogHold={() => jogCartesian(axis, rotStep)} aria-label="{axis} plus">+</button>
             </div>
           {/each}
         </div>
@@ -169,8 +243,8 @@
           {#each armState.joints as _joint, i (i)}
             <div class="axis-row">
               <span class="axis-name">J{i}</span>
-              <button type="button" {disabled} onclick={() => joint(i, -jointStep)}>−</button>
-              <button type="button" {disabled} onclick={() => joint(i, jointStep)}>+</button>
+              <button type="button" {disabled} use:jogHold={() => jogJoint(i, -jointStep)} aria-label="joint {i} minus">−</button>
+              <button type="button" {disabled} use:jogHold={() => jogJoint(i, jointStep)} aria-label="joint {i} plus">+</button>
             </div>
           {/each}
           {#if armState.joints.length === 0}
