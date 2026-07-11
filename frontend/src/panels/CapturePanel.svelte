@@ -61,9 +61,12 @@
 </script>
 
 <section class="capture-panel">
-  <header>
-    <h2>Capture</h2>
-    <div class="actions">
+  <header class="panel-header">
+    <div class="panel-titles">
+      <h2>Capture Points</h2>
+      <p class="panel-subtitle">Reference points used to define a frame.</p>
+    </div>
+    <div class="panel-actions">
       <button type="button" onclick={handleCapture} disabled={capture.isPending}>
         {capture.isPending ? 'Capturing…' : 'Capture point'}
       </button>
@@ -89,7 +92,7 @@
   {/if}
 
   {#if points.length === 0}
-    <p class="notice">No points captured yet.</p>
+    <p class="panel-empty">No points captured yet.</p>
   {:else}
     <table>
       <thead>
@@ -130,24 +133,6 @@
     padding: 1rem;
   }
 
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 1.15rem;
-  }
-
-  .actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
   button {
     min-height: 44px;
     padding: 0.5rem 1.1rem;
@@ -185,12 +170,6 @@
   th:first-child,
   td:first-child {
     text-align: left;
-  }
-
-  .notice {
-    color: #9aa0a6;
-    font-style: italic;
-    font-size: 0.9rem;
   }
 
   .error {

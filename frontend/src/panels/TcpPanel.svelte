@@ -88,27 +88,29 @@
 </script>
 
 <section class="tcp-panel" class:disabled>
-  <header>
-    <h2>TCP</h2>
+  <header class="panel-header">
+    <div class="panel-titles">
+      <h2>TCP Calibration</h2>
+      <p class="panel-subtitle">Calibrate the tool tip offset (tool center point).</p>
+    </div>
+    <div class="panel-actions">
+      <button type="button" onclick={handleCapture} disabled={disabled || capture.isPending}>
+        {capture.isPending ? 'Capturing…' : 'Capture TCP point'}
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        onclick={handleClear}
+        disabled={disabled || clear.isPending || points.length === 0}
+      >
+        Clear
+      </button>
+    </div>
   </header>
 
   {#if disabled}
-    <p class="notice">Requires a configured arm.</p>
+    <p class="panel-warning">Requires a configured arm.</p>
   {/if}
-
-  <div class="capture-row">
-    <button type="button" onclick={handleCapture} disabled={disabled || capture.isPending}>
-      {capture.isPending ? 'Capturing…' : 'Capture TCP point'}
-    </button>
-    <button
-      type="button"
-      class="secondary"
-      onclick={handleClear}
-      disabled={disabled || clear.isPending || points.length === 0}
-    >
-      Clear
-    </button>
-  </div>
 
   {#if capture.error}
     <p class="error">{capture.error.message}</p>
@@ -121,7 +123,7 @@
   {/if}
 
   {#if points.length === 0}
-    <p class="notice">No TCP points captured yet.</p>
+    <p class="panel-empty">No TCP points captured yet.</p>
   {:else}
     <table>
       <thead>
@@ -213,19 +215,9 @@
     opacity: 0.85;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 1.15rem;
-  }
-
   h3 {
     margin: 0 0 0.4rem;
     font-size: 1rem;
-  }
-
-  .capture-row {
-    display: flex;
-    gap: 0.5rem;
   }
 
   button {
@@ -296,11 +288,6 @@
     border: 1px solid var(--control-border, #444);
     background: var(--control-bg, #2a2e37);
     color: inherit;
-  }
-
-  .notice {
-    color: #d9a441;
-    font-size: 0.9rem;
   }
 
   .success {

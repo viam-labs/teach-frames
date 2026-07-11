@@ -82,8 +82,11 @@
 </script>
 
 <section class="frame-panel">
-  <header>
-    <h2>Frames</h2>
+  <header class="panel-header">
+    <div class="panel-titles">
+      <h2>Frames</h2>
+      <p class="panel-subtitle">Compute and store workcell coordinate frames.</p>
+    </div>
   </header>
 
   <div class="define-form">
@@ -116,7 +119,7 @@
           "{lastResult.name}" {lastResult.replaced ? 'replaced' : 'committed'}.
         </p>
       {:else}
-        <p class="notice">
+        <p class="panel-warning">
           "{lastResult.name}" computed but not persisted — check platform credentials.
         </p>
       {/if}
@@ -147,7 +150,7 @@
     {/if}
 
     {#if frameEntries.length === 0}
-      <p class="notice">No frames defined yet.</p>
+      <p class="panel-empty">No frames defined yet.</p>
     {:else}
       <table>
         <thead>
@@ -185,11 +188,6 @@
     flex-direction: column;
     gap: 1rem;
     padding: 1rem;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 1.15rem;
   }
 
   h3 {
@@ -292,12 +290,6 @@
   th:first-child,
   td:first-child {
     text-align: left;
-  }
-
-  .notice {
-    color: #9aa0a6;
-    font-style: italic;
-    font-size: 0.9rem;
   }
 
   .success {
