@@ -2,12 +2,13 @@
   import { untrack } from 'svelte'
   import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
+  import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
   import { captureBufferSignal } from '../lib/captureBuffer.svelte'
   import { capturePoint, clearBuffer, getBuffer, toCommandArgs, type BufferResponse } from '../lib/poseTracker'
 
   const machineId = useMachineId()
-  const pt = poseTrackerClient(machineId)
+  const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
 
   const buffer = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getBuffer()))
   const capture = createResourceMutation(pt, 'doCommand')

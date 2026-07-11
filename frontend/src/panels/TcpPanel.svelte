@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
+  import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
   import { armState } from '../lib/armState.svelte'
   import {
@@ -16,7 +17,7 @@
   } from '../lib/poseTracker'
 
   const machineId = useMachineId()
-  const pt = poseTrackerClient(machineId)
+  const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
 
   const buffer = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getTcpBuffer()))
   const capture = createResourceMutation(pt, 'doCommand')

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { ViamProvider } from '@viamrobotics/svelte-sdk'
   import { currentMachine, provideMachineId, type MachineIdentity } from './lib/machine'
+  import { selectedResource } from './lib/resource.svelte'
+  import ResourcePicker from './panels/ResourcePicker.svelte'
   import StatusBar from './panels/StatusBar.svelte'
   import JogPanel from './panels/JogPanel.svelte'
   import CapturePanel from './panels/CapturePanel.svelte'
@@ -24,25 +26,29 @@
   </main>
 {:else if machine}
   <ViamProvider dialConfigs={{ [machine.id]: machine.dialConf }}>
-    <div class="app-shell">
-      <StatusBar />
-      <main class="layout">
-        <section class="jog-region panel">
-          <JogPanel />
-        </section>
-        <div class="side-region">
-          <section class="panel">
-            <CapturePanel />
+    {#if selectedResource.name}
+      <div class="app-shell">
+        <StatusBar />
+        <main class="layout">
+          <section class="jog-region panel">
+            <JogPanel />
           </section>
-          <section class="panel">
-            <FramePanel />
-          </section>
-          <section class="panel">
-            <TcpPanel />
-          </section>
-        </div>
-      </main>
-    </div>
+          <div class="side-region">
+            <section class="panel">
+              <CapturePanel />
+            </section>
+            <section class="panel">
+              <FramePanel />
+            </section>
+            <section class="panel">
+              <TcpPanel />
+            </section>
+          </div>
+        </main>
+      </div>
+    {:else}
+      <ResourcePicker />
+    {/if}
   </ViamProvider>
 {/if}
 

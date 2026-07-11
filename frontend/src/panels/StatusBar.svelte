@@ -8,12 +8,13 @@
   } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
   import { useMachineId } from '../lib/machine'
+  import { selectedResource } from '../lib/resource.svelte'
   import { motion } from '../lib/motion.svelte'
   import { armState } from '../lib/armState.svelte'
   import { getArmState, parseArmState, stopArm, toCommandArgs } from '../lib/poseTracker'
 
   const machineId = useMachineId()
-  const pt = poseTrackerClient(machineId)
+  const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
 
   // Live arm-state poll: 500ms, paused while a jog/move is in flight so the
   // poll doesn't race the in-flight command's own state mutation. Also paused

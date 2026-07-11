@@ -1,13 +1,14 @@
 <script lang="ts">
   import { createResourceMutation } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
+  import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
   import { armState } from '../lib/armState.svelte'
   import { motion, withMove } from '../lib/motion.svelte'
   import { jogCartesian, jogJoint, toCommandArgs, type CartesianAxis } from '../lib/poseTracker'
 
   const machineId = useMachineId()
-  const pt = poseTrackerClient(machineId)
+  const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
   const jog = createResourceMutation(pt, 'doCommand')
 
   type Mode = 'cartesian' | 'joint'
