@@ -109,111 +109,117 @@
     </div>
   </header>
 
-  {#if armState.hasArm && armState.pose}
-    {#if mode === 'cartesian'}
-      <table class="readout" aria-label="Pose values">
-        <thead>
-          <tr><th>Pose</th><th>Value</th></tr>
-        </thead>
-        <tbody>
-          <tr><th scope="row">X</th><td>{fmt(armState.pose.x)}<span class="unit">mm</span></td></tr>
-          <tr><th scope="row">Y</th><td>{fmt(armState.pose.y)}<span class="unit">mm</span></td></tr>
-          <tr><th scope="row">Z</th><td>{fmt(armState.pose.z)}<span class="unit">mm</span></td></tr>
-          <tr><th scope="row">OX</th><td>{fmt(armState.pose.o_x)}</td></tr>
-          <tr><th scope="row">OY</th><td>{fmt(armState.pose.o_y)}</td></tr>
-          <tr><th scope="row">OZ</th><td>{fmt(armState.pose.o_z)}</td></tr>
-          <tr><th scope="row">&#952;</th><td>{fmt(armState.pose.theta)}<span class="unit">&deg;</span></td></tr>
-        </tbody>
-      </table>
-    {:else}
-      <table class="readout" aria-label="Joint positions">
-        <thead>
-          <tr><th>Joint</th><th>Position (&deg;)</th></tr>
-        </thead>
-        <tbody>
-          {#each armState.joints as joint, i (i)}
-            <tr><th scope="row">{i}</th><td>{fmt(joint)}<span class="unit">&deg;</span></td></tr>
-          {:else}
-            <tr><td colspan="2" class="panel-empty">No joint data available.</td></tr>
+  <div class="jog-body">
+    <div class="controls">
+      {#if mode === 'cartesian'}
+        <div class="step-group">
+          <span class="step-label">Translation step (mm)</span>
+          <div class="step-options" role="group" aria-label="Translation step size">
+            {#each TRANSLATION_STEPS as step (step)}
+              <button type="button" class:active={transStep === step} onclick={() => (transStep = step)}>
+                {step}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="axis-grid">
+          {#each TRANSLATION_AXES as axis (axis)}
+            <div class="axis-row">
+              <span class="axis-name">{axis.toUpperCase()}</span>
+              <button type="button" {disabled} onclick={() => cartesian(axis, -transStep)}>−</button>
+              <button type="button" {disabled} onclick={() => cartesian(axis, transStep)}>+</button>
+            </div>
           {/each}
-        </tbody>
-      </table>
-    {/if}
-  {:else if unexpectedError}
-    <p class="error">{unexpectedError}</p>
-  {:else if noArmConfigured}
-    <p class="panel-warning">No arm configured — jogging is disabled.</p>
-  {:else}
-    <p class="panel-empty">Loading arm state…</p>
-  {/if}
-
-  {#if mode === 'cartesian'}
-    <div class="step-group">
-      <span class="step-label">Translation step (mm)</span>
-      <div class="step-options" role="group" aria-label="Translation step size">
-        {#each TRANSLATION_STEPS as step (step)}
-          <button type="button" class:active={transStep === step} onclick={() => (transStep = step)}>
-            {step}
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    <div class="axis-grid">
-      {#each TRANSLATION_AXES as axis (axis)}
-        <div class="axis-row">
-          <span class="axis-name">{axis.toUpperCase()}</span>
-          <button type="button" {disabled} onclick={() => cartesian(axis, -transStep)}>−</button>
-          <button type="button" {disabled} onclick={() => cartesian(axis, transStep)}>+</button>
         </div>
-      {/each}
-    </div>
 
-    <div class="step-group">
-      <span class="step-label">Rotation step (deg)</span>
-      <div class="step-options" role="group" aria-label="Rotation step size">
-        {#each ROTATION_STEPS as step (step)}
-          <button type="button" class:active={rotStep === step} onclick={() => (rotStep = step)}>
-            {step}
-          </button>
-        {/each}
-      </div>
-    </div>
-
-    <div class="axis-grid">
-      {#each ROTATION_AXES as axis (axis)}
-        <div class="axis-row">
-          <span class="axis-name">{axis[0]?.toUpperCase()}{axis.slice(1)}</span>
-          <button type="button" {disabled} onclick={() => cartesian(axis, -rotStep)}>−</button>
-          <button type="button" {disabled} onclick={() => cartesian(axis, rotStep)}>+</button>
+        <div class="step-group">
+          <span class="step-label">Rotation step (deg)</span>
+          <div class="step-options" role="group" aria-label="Rotation step size">
+            {#each ROTATION_STEPS as step (step)}
+              <button type="button" class:active={rotStep === step} onclick={() => (rotStep = step)}>
+                {step}
+              </button>
+            {/each}
+          </div>
         </div>
-      {/each}
-    </div>
-  {:else}
-    <div class="step-group">
-      <span class="step-label">Joint step (deg)</span>
-      <div class="step-options" role="group" aria-label="Joint step size">
-        {#each JOINT_STEPS as step (step)}
-          <button type="button" class:active={jointStep === step} onclick={() => (jointStep = step)}>
-            {step}
-          </button>
-        {/each}
-      </div>
-    </div>
 
-    <div class="axis-grid">
-      {#each armState.joints as _joint, i (i)}
-        <div class="axis-row">
-          <span class="axis-name">J{i}</span>
-          <button type="button" {disabled} onclick={() => joint(i, -jointStep)}>−</button>
-          <button type="button" {disabled} onclick={() => joint(i, jointStep)}>+</button>
+        <div class="axis-grid">
+          {#each ROTATION_AXES as axis (axis)}
+            <div class="axis-row">
+              <span class="axis-name">{axis[0]?.toUpperCase()}{axis.slice(1)}</span>
+              <button type="button" {disabled} onclick={() => cartesian(axis, -rotStep)}>−</button>
+              <button type="button" {disabled} onclick={() => cartesian(axis, rotStep)}>+</button>
+            </div>
+          {/each}
         </div>
-      {/each}
-      {#if armState.joints.length === 0}
-        <p class="panel-empty">No joint data available.</p>
+      {:else}
+        <div class="step-group">
+          <span class="step-label">Joint step (deg)</span>
+          <div class="step-options" role="group" aria-label="Joint step size">
+            {#each JOINT_STEPS as step (step)}
+              <button type="button" class:active={jointStep === step} onclick={() => (jointStep = step)}>
+                {step}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="axis-grid">
+          {#each armState.joints as _joint, i (i)}
+            <div class="axis-row">
+              <span class="axis-name">J{i}</span>
+              <button type="button" {disabled} onclick={() => joint(i, -jointStep)}>−</button>
+              <button type="button" {disabled} onclick={() => joint(i, jointStep)}>+</button>
+            </div>
+          {/each}
+          {#if armState.joints.length === 0}
+            <p class="panel-empty">No joint data available.</p>
+          {/if}
+        </div>
       {/if}
     </div>
-  {/if}
+
+    <div class="readout-col">
+      {#if armState.hasArm && armState.pose}
+        {#if mode === 'cartesian'}
+          <table class="readout" aria-label="Pose values">
+            <thead>
+              <tr><th>Pose</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">X</th><td>{fmt(armState.pose.x)}<span class="unit">mm</span></td></tr>
+              <tr><th scope="row">Y</th><td>{fmt(armState.pose.y)}<span class="unit">mm</span></td></tr>
+              <tr><th scope="row">Z</th><td>{fmt(armState.pose.z)}<span class="unit">mm</span></td></tr>
+              <tr><th scope="row">OX</th><td>{fmt(armState.pose.o_x)}</td></tr>
+              <tr><th scope="row">OY</th><td>{fmt(armState.pose.o_y)}</td></tr>
+              <tr><th scope="row">OZ</th><td>{fmt(armState.pose.o_z)}</td></tr>
+              <tr><th scope="row">&#952;</th><td>{fmt(armState.pose.theta)}<span class="unit">&deg;</span></td></tr>
+            </tbody>
+          </table>
+        {:else}
+          <table class="readout" aria-label="Joint positions">
+            <thead>
+              <tr><th>Joint</th><th>Position (&deg;)</th></tr>
+            </thead>
+            <tbody>
+              {#each armState.joints as joint, i (i)}
+                <tr><th scope="row">{i}</th><td>{fmt(joint)}<span class="unit">&deg;</span></td></tr>
+              {:else}
+                <tr><td colspan="2" class="panel-empty">No joint data available.</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      {:else if unexpectedError}
+        <p class="error">{unexpectedError}</p>
+      {:else if noArmConfigured}
+        <p class="panel-warning">No arm configured — jogging is disabled.</p>
+      {:else}
+        <p class="panel-empty">Loading arm state…</p>
+      {/if}
+    </div>
+  </div>
 
   {#if jog.error}
     <p class="error">{jog.error.message}</p>
@@ -226,6 +232,30 @@
     flex-direction: column;
     gap: 1rem;
     padding: 1rem;
+  }
+
+  .jog-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .readout-col {
+    min-width: 0;
+  }
+
+  @media (max-width: 560px) {
+    .jog-body {
+      grid-template-columns: 1fr;
+    }
   }
 
   header {
