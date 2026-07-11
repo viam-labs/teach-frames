@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { poseTrackerClient } from '../lib/clients'
   import { useMachineId } from '../lib/machine'
@@ -17,10 +18,20 @@
   // Other panels (e.g. FramePanel after a successful define) can clear the
   // server-side buffer out from under us. Refetch whenever that signal bumps
   // so we don't keep displaying points the server already discarded.
+  //
+  // This effect MUST depend ONLY on captureBufferSignal.version. The refetch()
+  // call is wrapped in untrack() because reading `buffer` here would otherwise
+  // subscribe this effect to the TanStack query result; refetch() then mutates
+  // that result (svelte-query reassigns every result field on each observer
+  // notification), which would re-fire this effect and spin forever, hanging
+  // the page. version starts at 0 and only ever increments, so we skip the
+  // initial mount run — the buffer query already fetches on mount on its own.
   $effect(() => {
-    // Read .version so this effect tracks the signal; the value itself is unused.
-    const _version = captureBufferSignal.version
-    void buffer.refetch()
+    const version = captureBufferSignal.version
+    if (version === 0) return
+    untrack(() => {
+      void buffer.refetch()
+    })
   })
 
   async function handleCapture() {
