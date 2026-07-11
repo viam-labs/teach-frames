@@ -110,24 +110,35 @@
   </header>
 
   {#if armState.hasArm && armState.pose}
-    <div class="readout" aria-label="Arm state">
-      <div class="readout-line">
-        <span>X {fmt(armState.pose.x)}</span>
-        <span>Y {fmt(armState.pose.y)}</span>
-        <span>Z {fmt(armState.pose.z)}</span>
-        <span>O&#8339; {fmt(armState.pose.o_x)}</span>
-        <span>O&#8340; {fmt(armState.pose.o_y)}</span>
-        <span>O&#8342; {fmt(armState.pose.o_z)}</span>
-        <span>&#952; {fmt(armState.pose.theta)}</span>
-      </div>
-      {#if armState.joints.length > 0}
-        <div class="readout-line joints">
+    {#if mode === 'cartesian'}
+      <table class="readout" aria-label="Pose values">
+        <thead>
+          <tr><th>Pose</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">X</th><td>{fmt(armState.pose.x)}<span class="unit">mm</span></td></tr>
+          <tr><th scope="row">Y</th><td>{fmt(armState.pose.y)}<span class="unit">mm</span></td></tr>
+          <tr><th scope="row">Z</th><td>{fmt(armState.pose.z)}<span class="unit">mm</span></td></tr>
+          <tr><th scope="row">OX</th><td>{fmt(armState.pose.o_x)}</td></tr>
+          <tr><th scope="row">OY</th><td>{fmt(armState.pose.o_y)}</td></tr>
+          <tr><th scope="row">OZ</th><td>{fmt(armState.pose.o_z)}</td></tr>
+          <tr><th scope="row">&#952;</th><td>{fmt(armState.pose.theta)}<span class="unit">&deg;</span></td></tr>
+        </tbody>
+      </table>
+    {:else}
+      <table class="readout" aria-label="Joint positions">
+        <thead>
+          <tr><th>Joint</th><th>Position (&deg;)</th></tr>
+        </thead>
+        <tbody>
           {#each armState.joints as joint, i (i)}
-            <span>J{i} {fmt(joint)}&deg;</span>
+            <tr><th scope="row">{i}</th><td>{fmt(joint)}<span class="unit">&deg;</span></td></tr>
+          {:else}
+            <tr><td colspan="2" class="panel-empty">No joint data available.</td></tr>
           {/each}
-        </div>
-      {/if}
-    </div>
+        </tbody>
+      </table>
+    {/if}
   {:else if unexpectedError}
     <p class="error">{unexpectedError}</p>
   {:else if noArmConfigured}
@@ -304,25 +315,59 @@
   }
 
   .readout {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.6rem 0.75rem;
+    width: 100%;
+    border-collapse: collapse;
     background: #12141a;
     border: 1px solid var(--control-border, #333);
     border-radius: 0.5rem;
+    overflow: hidden;
     font-variant-numeric: tabular-nums;
     font-size: 0.9rem;
   }
 
-  .readout-line {
-    display: flex;
-    gap: 0.9rem;
-    flex-wrap: wrap;
+  .readout thead th {
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #9aa0a6;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--control-border, #333);
+    background: #171a21;
   }
 
-  .readout-line.joints {
+  .readout thead th:last-child {
+    text-align: right;
+  }
+
+  .readout tbody th {
+    text-align: left;
+    font-weight: 600;
+    color: #e6e8eb;
+    width: 5rem;
+  }
+
+  .readout tbody td {
+    text-align: right;
     color: #c8ccd2;
+  }
+
+  .readout tbody th,
+  .readout tbody td {
+    padding: 0.3rem 0.75rem;
+    border-bottom: 1px solid #23262e;
+  }
+
+  .readout tbody tr:last-child th,
+  .readout tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .readout .unit {
+    margin-left: 0.35rem;
+    color: #7c828a;
+    font-size: 0.8em;
   }
 
   .error {
