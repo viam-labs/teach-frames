@@ -27,8 +27,10 @@
   --ink-faint: #7c828a; /* readout units */
   --ink-on-accent: #ffffff; /* text over accent / danger fills */
 
-  /* Accent — primary actions and current selection */
-  --accent: #3d6bff;
+  /* Accent — primary actions and current selection. Tuned so white label text
+     clears WCAG AA (4.5:1) at rest AND under the hover brightness lift: 5.17:1
+     rest, ~4.6:1 hover. */
+  --accent: #3560ee;
   --focus-ring: #6f9bff; /* lighter than accent: ≥3:1 on every surface, and stays visible over the accent fill on a held jog key */
 
   /* Status */

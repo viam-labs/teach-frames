@@ -92,7 +92,8 @@
   :global(button:hover:not(:disabled)),
   :global(select:hover),
   :global(input:hover:not(:disabled)) {
-    filter: brightness(1.12);
+    /* Gentle lift; kept at 1.08 so it can't pull white-on-accent text below AA. */
+    filter: brightness(1.08);
   }
 
   /* Tactile press — a small nudge on any button. */
