@@ -18,7 +18,9 @@
   const machineId = useMachineId()
   const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
 
-  const frames = createResourceQuery(pt, 'doCommand', () => toCommandArgs(listFrames()))
+  // 4th arg (options) required — a lone trailing arg is treated as options and
+  // would drop our args, sending an empty command. See StatusBar for detail.
+  const frames = createResourceQuery(pt, 'doCommand', () => toCommandArgs(listFrames()), () => ({}))
   const define = createResourceMutation(pt, 'doCommand')
   const del = createResourceMutation(pt, 'doCommand')
   const clearAll = createResourceMutation(pt, 'doCommand')

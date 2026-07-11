@@ -21,7 +21,16 @@
   // once we know there's no arm configured — the initial query still runs (so
   // we can detect that condition), but polling every 500ms an endpoint that
   // will only ever error is pointless churn.
-  const armStateQuery = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getArmState()))
+  // The 4th argument (options) is REQUIRED: createResourceQuery treats a single
+  // trailing argument as `options`, which would drop our `args` and send an
+  // empty command (the server then rejects it: "expected exactly one command
+  // key, got 0"). Passing options here keeps the args in the args position.
+  const armStateQuery = createResourceQuery(
+    pt,
+    'doCommand',
+    () => toCommandArgs(getArmState()),
+    () => ({}),
+  )
   usePolling(
     () => armStateQuery.queryKey,
     () => (noArmConfigured || motion.busy > 0 ? false : 500),
