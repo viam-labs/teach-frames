@@ -1,4 +1,4 @@
-.PHONY: all module clean lint test
+.PHONY: all module clean lint test frontend
 
 BIN     = bin/teach-frames
 TARBALL = bin/module.tar.gz
@@ -13,8 +13,13 @@ $(BIN): Makefile $(shell find . -type f -name '*.go')
 	mkdir -p bin
 	GOOS=$(VIAM_BUILD_OS) GOARCH=$(VIAM_BUILD_ARCH) $(GO_BUILD_ENV) go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/module
 
-module: $(BIN)
-	tar -czf $(TARBALL) $(BIN) meta.json
+module: $(BIN) frontend
+	tar -czf $(TARBALL) $(BIN) meta.json frontend/dist
+
+# Build the bundled Svelte app. Requires npm on PATH; the Viam cloud build gets
+# it via build.sh (which activates mise before invoking make).
+frontend:
+	cd frontend && npm ci && npm run build
 
 lint:
 	go vet ./...

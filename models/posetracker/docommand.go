@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
+	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
 
 	"github.com/viam-labs/teach-frames/config"
@@ -26,6 +29,10 @@ import (
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
 //	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
 //	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact. Run after teach_tcp_position, since it writes orientation only and does not re-derive the translation.
+//	{"get_arm_state": {}}                                    — return the current TCP pose and joint positions (degrees) in one call, for the UI poll loop (errors if no arm is configured).
+//	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
+//	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
+//	{"jog_cartesian": {"axis": "x", "step": 5}}               — nudge the TCP by a signed step: x/y/z (mm) translate along the world frame, roll/pitch/yaw (degrees) rotate about the tool frame (errors if no arm is configured or the axis is unknown).
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -102,6 +109,24 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "teach_tcp_orientation"):
 		return pt.teachTCPOrientation(ctx, cmd["teach_tcp_orientation"])
+
+	case has(cmd, "get_arm_state"):
+		return pt.getArmState(ctx)
+
+	case has(cmd, "stop_arm"):
+		if pt.arm == nil {
+			return nil, errors.New("arm dependency not configured; cannot stop arm")
+		}
+		if err := pt.arm.Stop(ctx, nil); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"stopped": true}, nil
+
+	case has(cmd, "jog_joint"):
+		return pt.jogJoint(ctx, cmd["jog_joint"])
+
+	case has(cmd, "jog_cartesian"):
+		return pt.jogCartesian(ctx, cmd["jog_cartesian"])
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
@@ -381,6 +406,125 @@ func keysOf(m map[string]interface{}) []string {
 		ks = append(ks, k)
 	}
 	return ks
+}
+
+// getArmState returns the current TCP pose and joint positions (degrees) for the UI.
+func (pt *teachTracker) getArmState(ctx context.Context) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot read arm state")
+	}
+	pose, err := pt.arm.EndPosition(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	joints, err := pt.arm.JointPositions(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"pose":   poseToMap(pose),
+		"joints": inputsToDegrees(joints),
+	}, nil
+}
+
+// jogJoint nudges a single joint by a signed step (degrees) and moves the arm there.
+func (pt *teachTracker) jogJoint(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot jog")
+	}
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("jog_joint args must be an object")
+	}
+	jointF, ok := args["joint"].(float64)
+	if !ok {
+		return nil, errors.New("jog_joint requires a numeric 'joint' index")
+	}
+	step, ok := args["step"].(float64)
+	if !ok {
+		return nil, errors.New("jog_joint requires a numeric 'step' (degrees)")
+	}
+	joint := int(jointF)
+
+	cur, err := pt.arm.JointPositions(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if joint < 0 || joint >= len(cur) {
+		return nil, fmt.Errorf("joint index %d out of range [0,%d)", joint, len(cur))
+	}
+	next := make([]referenceframe.Input, len(cur))
+	copy(next, cur)
+	next[joint] = cur[joint] + step*math.Pi/180.0 // Input is a float64 alias (radians)
+
+	if err := pt.arm.MoveToJointPositions(ctx, next, nil); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"joints": inputsToDegrees(next)}, nil
+}
+
+// jogCartesian nudges the TCP by a signed step. Translation axes (x/y/z, mm) are
+// world-frame; rotation axes (roll/pitch/yaw, degrees) are tool-frame.
+func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot jog")
+	}
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("jog_cartesian args must be an object")
+	}
+	axis, ok := args["axis"].(string)
+	if !ok {
+		return nil, errors.New("jog_cartesian requires a string 'axis'")
+	}
+	step, ok := args["step"].(float64)
+	if !ok {
+		return nil, errors.New("jog_cartesian requires a numeric 'step'")
+	}
+
+	cur, err := pt.arm.EndPosition(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var next spatialmath.Pose
+	switch axis {
+	case "x":
+		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{X: step}), cur.Orientation())
+	case "y":
+		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{Y: step}), cur.Orientation())
+	case "z":
+		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{Z: step}), cur.Orientation())
+	case "roll", "pitch", "yaw":
+		rad := step * math.Pi / 180.0
+		var delta *spatialmath.EulerAngles
+		switch axis {
+		case "roll":
+			delta = &spatialmath.EulerAngles{Roll: rad}
+		case "pitch":
+			delta = &spatialmath.EulerAngles{Pitch: rad}
+		case "yaw":
+			delta = &spatialmath.EulerAngles{Yaw: rad}
+		}
+		// Tool-frame rotation: right-multiply current pose by the delta (zero translation preserves the point).
+		next = spatialmath.Compose(cur, spatialmath.NewPoseFromOrientation(delta))
+	default:
+		return nil, fmt.Errorf("unknown jog axis %q (want x|y|z|roll|pitch|yaw)", axis)
+	}
+
+	if err := pt.arm.MoveToPosition(ctx, next, nil); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"pose": poseToMap(next), "moved": true}, nil
+}
+
+// inputsToDegrees converts joint inputs (radians) to a plain []float64 in degrees.
+func inputsToDegrees(inputs []referenceframe.Input) []float64 {
+	out := make([]float64, len(inputs))
+	for i, in := range inputs {
+		out[i] = float64(in) * 180.0 / math.Pi
+	}
+	return out
 }
 
 // poseToMap converts a spatialmath.Pose to a plain map for DoCommand responses.

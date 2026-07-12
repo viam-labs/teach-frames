@@ -75,6 +75,7 @@ type teachTracker struct {
 	destFrame string
 
 	flange       posesource.FlangeSource
+	arm          arm.Arm
 	tcpComponent string
 	armName      string
 
@@ -125,6 +126,7 @@ func newPoseTracker(
 			logger.Warnw("TCP teaching disabled: arm dependency not resolvable", "arm", cfg.Arm, "err", aerr)
 		} else {
 			pt.flange = &posesource.ArmSource{Arm: a}
+			pt.arm = a
 		}
 	}
 

@@ -60,6 +60,10 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 | `teach_tcp_orientation` | `{"o_x": <n>, "o_y": <n>, "o_z": <n>, "theta": <n>}` | Persists an explicit tool orientation (orientation-vector degrees) to `tcp_component.frame.orientation`, leaving the taught translation unchanged. Rejects an all-zero `(o_x, o_y, o_z)` vector. Requires platform-API creds. | `committed` (bool), `orientation` (o_x/o_y/o_z/theta) |
 | `get_tcp_buffer` | `{}` | Returns all poses currently in the TCP capture buffer. | `points` (array of pose maps) |
 | `clear_tcp_buffer` | `{}` | Empties the TCP capture buffer. | `cleared` (count removed) |
+| `get_arm_state` | `{}` | Reads the current TCP pose and joint positions in a single call (for a UI poll loop). Errors if no `arm` is configured. | `pose` (x/y/z/o_x/o_y/o_z/theta), `joints` (array of degrees) |
+| `jog_cartesian` | `{"axis": "x"\|"y"\|"z"\|"roll"\|"pitch"\|"yaw", "step": <mm-or-deg>}` | Nudges the TCP by a signed step: `x`/`y`/`z` translate along the **world** frame (mm); `roll`/`pitch`/`yaw` rotate about the **tool** frame (degrees). Reads `EndPosition`, applies the delta, and calls `MoveToPosition`. Errors if no `arm` is configured or the axis is unknown. | `pose` (resulting TCP pose), `moved` (bool) |
+| `jog_joint` | `{"joint": <index>, "step": <deg>}` | Nudges a single joint by a signed step (degrees) and calls `MoveToJointPositions`. Errors if no `arm` is configured or the joint index is out of range. | `joints` (resulting positions, degrees) |
+| `stop_arm` | `{}` | Stops arm motion immediately (`arm.Stop`). Errors if no `arm` is configured. | `stopped` (bool) |
 
 ### `define_frame` methods
 
@@ -76,6 +80,34 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 {"capture_point": {}}
 {"capture_point": {}}
 {"define_frame": {"name": "fixture_a", "method": "3point"}}
+```
+
+### Jogging
+
+The `jog_cartesian`, `jog_joint`, `stop_arm`, and `get_arm_state` commands drive
+the arm named by the optional `arm` config attribute — the same dependency TCP
+teaching uses. Without it, these commands return an "arm dependency not
+configured" error.
+
+Jogging is **discrete**: each command applies exactly one signed step and blocks
+until the move completes; the `step` value carries its own sign (send a negative
+`step` to move the opposite direction). The frame convention is **world-frame
+translation, tool-frame rotation**:
+
+- `jog_cartesian` `x`/`y`/`z` translate the TCP along the world/base axes (mm).
+- `jog_cartesian` `roll`/`pitch`/`yaw` rotate about the TCP's own axes (degrees),
+  composed via quaternion math so the orientation stays well-formed.
+- `jog_joint` nudges one joint by a signed angle (degrees).
+
+The arm's own joint/reachability limits remain the safety authority — an
+unreachable or out-of-limit jog surfaces as the underlying `MoveToPosition` /
+`MoveToJointPositions` error. Use `stop_arm` to halt immediately.
+
+**Example — nudge +5 mm in world X, then rotate the tool −10° about its Z:**
+
+```json
+{"jog_cartesian": {"axis": "x", "step": 5}}
+{"jog_cartesian": {"axis": "yaw", "step": -10}}
 ```
 
 ### TCP teaching
@@ -199,6 +231,60 @@ The app-API persistence path requires a live cloud connection and has no unit te
 7. **Verify visualization.** Open the Viam visualization panel. Confirm an axes triad labeled `fixture_a` appears at the expected location in the scene.
 8. **Restart the machine.** Restart viam-server (or reload the module). Confirm `{"list_frames": {}}` still returns `fixture_a` — i.e. the frame was reloaded from config on startup.
 
+## Teach Pendant application
+
+This module ships a browser-based **teach pendant** as a Viam Application — a
+static web UI, registered in `meta.json` under `applications` (type
+`single_machine`), that Viam hosts and opens in the context of one machine. It
+is a full pendant: jog the arm, capture points, define frames, and run TCP
+teaching from a single screen. Everything the UI does goes through the
+pose-tracker's DoCommands (jogging included), so it needs no extra configuration
+beyond the `pose-tracker` component — set its optional `arm` attribute to enable
+the jog and TCP-teaching controls.
+
+The app source lives in `frontend/` (Svelte 5 + Vite, built with
+[`@viamrobotics/svelte-sdk`](https://github.com/viamrobotics/viam-svelte-sdk)).
+`make module` builds it (`frontend/dist/`) and bundles it into the module
+tarball.
+
+### v1 scope
+
+Numeric readouts only — live TCP pose and joint angles, capture-buffer and
+frame tables. There is no in-app 3D scene or camera feed in v1; use the Viam
+visualizer (fed by the companion `world-state-store` service) to see taught
+frames as axes triads. Jogging is discrete (world-frame translation, tool-frame
+rotation), with a step-size selector and an always-available **Stop**.
+
+### Local development
+
+`viam module local-app-testing` proxies your local dev server and injects the
+same machine-credential cookie that the hosted platform provides in production —
+so there is a single connection code path.
+
+```sh
+# 1. Run the app's dev server (Vite, defaults to :5173)
+cd frontend && npm install && npm run dev
+
+# 2. In another shell, from a logged-in CLI session, proxy + inject the cookie:
+viam login
+viam module local-app-testing \
+  --app-url http://localhost:5173 \
+  --machine-id YOUR-MACHINE-ID
+```
+
+The CLI opens `http://localhost:8012/start`, sets the machine cookie, and
+redirects to the proxied app. `--machine-id` (from the machine's Fleet page)
+selects single-machine mode.
+
+### Frontend checks
+
+```sh
+cd frontend
+npm run check   # svelte-check (types)
+npm test        # vitest unit tests (DoCommand payload builders)
+npm run build   # production build → frontend/dist/
+```
+
 ## Build and development
 
 ```sh
@@ -218,4 +304,4 @@ make module
 make clean
 ```
 
-`make module` produces `bin/module.tar.gz` containing `bin/teach-frames` and `meta.json`. The `bin/` directory is gitignored. Cross-compilation honors `VIAM_BUILD_OS`/`VIAM_BUILD_ARCH`, which the Viam build action sets automatically.
+`make module` builds the frontend (`make frontend`) and produces `bin/module.tar.gz` containing `bin/teach-frames`, `meta.json`, and `frontend/dist/` (the teach pendant application, whose `entrypoint` is `frontend/dist/index.html`). The `bin/` directory is gitignored. Cross-compilation honors `VIAM_BUILD_OS`/`VIAM_BUILD_ARCH`, which the Viam build action sets automatically.

@@ -3,10 +3,13 @@ package posetracker
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
+	"go.viam.com/rdk/testutils/inject"
 	"go.viam.com/test"
 
 	tfconfig "github.com/viam-labs/teach-frames/config"
@@ -704,4 +707,241 @@ func TestTeachTCPOrientationNoArm(t *testing.T) {
 	})
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, fake.SavedComponent, test.ShouldEqual, "") // nothing persisted
+}
+
+// --- get_arm_state tests ---
+
+func TestGetArmState(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil) // arm not configured
+
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}), nil
+	}
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return []referenceframe.Input{0, math.Pi / 2}, nil
+	}
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	pose := resp["pose"].(map[string]interface{})
+	test.That(t, pose["x"], test.ShouldAlmostEqual, 1.0)
+	joints := resp["joints"].([]float64)
+	test.That(t, joints[0], test.ShouldAlmostEqual, 0.0)
+	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0) // radians→degrees
+}
+
+// --- stop_arm tests ---
+
+func TestStopArm(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	stopped := false
+	injArm.StopFunc = func(context.Context, map[string]interface{}) error { stopped = true; return nil }
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"stop_arm": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["stopped"], test.ShouldBeTrue)
+	test.That(t, stopped, test.ShouldBeTrue)
+}
+
+func TestStopArmNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"stop_arm": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// --- jog_joint tests ---
+
+func TestJogJoint(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	start := []referenceframe.Input{0, 0, 0}
+	var moved []referenceframe.Input
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return start, nil
+	}
+	injArm.MoveToJointPositionsFunc = func(_ context.Context, p []referenceframe.Input, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	// jog joint 1 by +90 degrees
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_joint": map[string]interface{}{"joint": 1.0, "step": 90.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved[1], test.ShouldAlmostEqual, math.Pi/2) // +90deg in radians
+	test.That(t, moved[0], test.ShouldAlmostEqual, 0.0)
+	joints := resp["joints"].([]float64)
+	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0)
+
+	// out-of-range joint index errors
+	_, err = pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_joint": map[string]interface{}{"joint": 9.0, "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestJogJointNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_joint": map[string]interface{}{"joint": 0.0, "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestJogCartesianTranslation(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	// non-identity orientation to prove translation is world-frame (not rotated by tool orientation)
+	startOri := &spatialmath.EulerAngles{Yaw: math.Pi / 2}
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPose(r3.Vector{X: 10, Y: 20, Z: 30}, startOri), nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 15.0) // 10+5 world-frame
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 20.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 30.0)
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), startOri), test.ShouldBeTrue)
+}
+
+func TestJogCartesianNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestJogCartesianUnknownAxis(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, &spatialmath.EulerAngles{}), nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "bogus", "step": 5.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestJogCartesianRotationToolFrame(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	startOri := &spatialmath.EulerAngles{Roll: math.Pi / 2}
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, startOri), nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0},
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	// pure rotation: position unchanged
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 1.0)
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 2.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 3.0)
+
+	// orientation == tool-frame compose (right-multiply) of a 30deg yaw
+	delta := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: 30 * math.Pi / 180})
+	expected := spatialmath.Compose(spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, startOri), delta)
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+}
+
+// TestJogCartesianAllAxes covers every translation and rotation axis (x/y/z and
+// roll/pitch/yaw) with a non-identity start pose, closing the coverage gap where
+// only x and yaw were exercised for the math. Translation axes must move the world
+// point and preserve orientation; rotation axes must preserve position and equal the
+// tool-frame (right-multiply) compose of a single-axis Euler delta.
+func TestJogCartesianAllAxes(t *testing.T) {
+	start := spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, &spatialmath.EulerAngles{Roll: math.Pi / 2})
+	const step = 30.0
+
+	transCases := map[string]r3.Vector{
+		"x": {X: step}, "y": {Y: step}, "z": {Z: step},
+	}
+	for axis, delta := range transCases {
+		t.Run("translate_"+axis, func(t *testing.T) {
+			injArm := inject.NewArm("my-arm")
+			injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+				return start, nil
+			}
+			var moved spatialmath.Pose
+			injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+				moved = p
+				return nil
+			}
+			pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+			pt.arm = injArm
+
+			_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+				"jog_cartesian": map[string]interface{}{"axis": axis, "step": step},
+			})
+			test.That(t, err, test.ShouldBeNil)
+			want := start.Point().Add(delta)
+			test.That(t, moved.Point().X, test.ShouldAlmostEqual, want.X)
+			test.That(t, moved.Point().Y, test.ShouldAlmostEqual, want.Y)
+			test.That(t, moved.Point().Z, test.ShouldAlmostEqual, want.Z)
+			test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), start.Orientation()), test.ShouldBeTrue)
+		})
+	}
+
+	rad := step * math.Pi / 180
+	rotCases := map[string]*spatialmath.EulerAngles{
+		"roll":  {Roll: rad},
+		"pitch": {Pitch: rad},
+		"yaw":   {Yaw: rad},
+	}
+	for axis, euler := range rotCases {
+		t.Run("rotate_"+axis, func(t *testing.T) {
+			injArm := inject.NewArm("my-arm")
+			injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+				return start, nil
+			}
+			var moved spatialmath.Pose
+			injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+				moved = p
+				return nil
+			}
+			pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+			pt.arm = injArm
+
+			_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+				"jog_cartesian": map[string]interface{}{"axis": axis, "step": step},
+			})
+			test.That(t, err, test.ShouldBeNil)
+			// position preserved
+			test.That(t, moved.Point().X, test.ShouldAlmostEqual, 1.0)
+			test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 2.0)
+			test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 3.0)
+			// tool-frame (right-multiply) orientation
+			expected := spatialmath.Compose(start, spatialmath.NewPoseFromOrientation(euler))
+			test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+		})
+	}
 }

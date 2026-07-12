@@ -17,9 +17,17 @@
       "short_description": "Mirrors the pose-tracker's taught frames into the Viam visualizer as axes triads."
     }
   ],
+  "applications": [
+    {
+      "name": "teach-pendant",
+      "type": "single_machine",
+      "entrypoint": "frontend/dist/index.html"
+    }
+  ],
   "entrypoint": "bin/teach-frames",
   "build": {
-    "build": "make module",
+    "setup": "./setup.sh",
+    "build": "./build.sh",
     "path": "bin/module.tar.gz",
     "arch": [
       "darwin/arm64",
