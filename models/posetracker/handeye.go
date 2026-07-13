@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/golang/geo/r3"
+	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/rimage"
 	rutils "go.viam.com/rdk/utils"
 
@@ -89,4 +90,42 @@ func (pt *teachTracker) captureHandEyePoint(ctx context.Context, raw interface{}
 // vecToMap renders an r3.Vector as a plain xyz map for DoCommand responses.
 func vecToMap(v r3.Vector) map[string]interface{} {
 	return map[string]interface{}{"x": v.X, "y": v.Y, "z": v.Z}
+}
+
+// solveHandEye runs the Kabsch camera->world solve over the buffer, persists the
+// result to the camera component's own frame (parent world), reports the residual,
+// and clears the buffer on success. On any failure the buffer is preserved.
+func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{}, error) {
+	if pt.persist == nil {
+		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot commit camera calibration")
+	}
+	if pt.cameraName == "" {
+		return nil, errors.New("camera dependency not configured; cannot solve hand-eye")
+	}
+
+	buf := pt.store.HandEyeBuffer()
+	pose, residual, err := frames.ComputeCameraToWorld(buf)
+	if err != nil {
+		return nil, fmt.Errorf("hand-eye solve failed: %w", err)
+	}
+
+	// Serialize against other config-persisting commits.
+	pt.commitMu.Lock()
+	defer pt.commitMu.Unlock()
+
+	translation := pose.Point()
+	orientation := pose.Orientation()
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.cameraName, referenceframe.World, &translation, orientation); perr != nil {
+		return nil, fmt.Errorf("persist failed, camera calibration not committed: %w", perr)
+	}
+
+	pt.store.ClearHandEyeBuffer()
+	ov := orientation.OrientationVectorDegrees()
+	return map[string]interface{}{
+		"committed":    true,
+		"pose":         poseToMap(pose),
+		"residual_rms": residual,
+		"parent":       referenceframe.World,
+		"orientation":  map[string]interface{}{"o_x": ov.OX, "o_y": ov.OY, "o_z": ov.OZ, "theta": ov.Theta},
+	}, nil
 }

@@ -1055,3 +1055,44 @@ func TestGetAndClearHandEyeBuffer(t *testing.T) {
 	test.That(t, cleared["cleared"], test.ShouldEqual, 1)
 	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
 }
+
+// --- solve_handeye tests ---
+
+func TestSolveHandEye(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	// Identity transform: world == camera, so R=I, t=0.
+	pts := []frames.HandEyePair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	}
+	for _, p := range pts {
+		pt.store.AddHandEyePair(p)
+	}
+	pt.cameraName = "cam"
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["committed"], test.ShouldBeTrue)
+	test.That(t, resp["residual_rms"].(float64), test.ShouldBeLessThan, 1e-6)
+	// Buffer cleared on success:
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
+	// Persisted to the camera's frame, parent world:
+	fake := pt.persist.(*persist.Fake)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "cam")
+	test.That(t, fake.SavedParent, test.ShouldEqual, "world")
+	test.That(t, fake.SavedTranslation, test.ShouldNotBeNil)
+}
+
+func TestSolveHandEyePersistDisabledErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = nil
+	for i := 0; i < 3; i++ {
+		pt.store.AddHandEyePair(frames.HandEyePair{})
+	}
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	// Buffer preserved on failure:
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 3)
+}

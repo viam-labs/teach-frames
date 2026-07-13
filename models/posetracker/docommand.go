@@ -37,6 +37,7 @@ import (
 //	{"capture_handeye_point": {"u": 0, "v": 0}}              — deproject the clicked pixel against the cached snapshot, read the current TCP world pose, and store the (world, camera) pair (errors if no camera is configured, no snapshot is cached, u/v are missing/non-numeric, or the pixel has no valid depth).
 //	{"get_handeye_buffer": {}}                               — return all (world, camera) pairs currently in the hand-eye capture buffer.
 //	{"clear_handeye_buffer": {}}                             — empty the hand-eye capture buffer and return the count removed.
+//	{"solve_handeye": {}}                                     — solve the camera->world transform over the hand-eye buffer, persist it to the camera component's own frame (parent world), report the residual, and clear the buffer (errors if persistence or the camera dependency is not configured; buffer preserved on failure).
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -148,6 +149,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "clear_handeye_buffer"):
 		return map[string]interface{}{"cleared": pt.store.ClearHandEyeBuffer()}, nil
+
+	case has(cmd, "solve_handeye"):
+		return pt.solveHandEye(ctx)
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
