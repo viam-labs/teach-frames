@@ -7,6 +7,8 @@ import (
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
+
+	"github.com/viam-labs/teach-frames/frames"
 )
 
 func TestBufferCaptureAndClear(t *testing.T) {
@@ -207,4 +209,27 @@ func TestTCPBufferReturnsCopy(t *testing.T) {
 	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 2)
 	internal := s.TCPBuffer()
 	test.That(t, internal[0], test.ShouldNotBeNil)
+}
+
+func TestHandEyeBuffer(t *testing.T) {
+	s := New()
+	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 0)
+
+	i0 := s.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
+	test.That(t, i0, test.ShouldEqual, 0)
+	i1 := s.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 3}, Camera: r3.Vector{Z: 4}})
+	test.That(t, i1, test.ShouldEqual, 1)
+	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 2)
+
+	buf := s.HandEyeBuffer()
+	test.That(t, len(buf), test.ShouldEqual, 2)
+	test.That(t, buf[0].World.X, test.ShouldEqual, 1)
+
+	// Copy semantics: mutating the returned slice must not affect the store.
+	buf[0].World.X = 999
+	test.That(t, s.HandEyeBuffer()[0].World.X, test.ShouldEqual, 1)
+
+	n := s.ClearHandEyeBuffer()
+	test.That(t, n, test.ShouldEqual, 2)
+	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 0)
 }

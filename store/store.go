@@ -7,14 +7,17 @@ import (
 
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
+
+	"github.com/viam-labs/teach-frames/frames"
 )
 
 // FrameStore is the authoritative in-memory state, guarded by a mutex.
 type FrameStore struct {
-	mu        sync.RWMutex
-	frames    map[string]*referenceframe.PoseInFrame
-	buffer    []spatialmath.Pose
-	tcpBuffer []spatialmath.Pose
+	mu            sync.RWMutex
+	frames        map[string]*referenceframe.PoseInFrame
+	buffer        []spatialmath.Pose
+	tcpBuffer     []spatialmath.Pose
+	handeyeBuffer []frames.HandEyePair
 }
 
 // New returns an initialised, empty FrameStore.
@@ -85,6 +88,37 @@ func (s *FrameStore) ClearTCPBuffer() int {
 	defer s.mu.Unlock()
 	n := len(s.tcpBuffer)
 	s.tcpBuffer = nil
+	return n
+}
+
+// AddHandEyePair appends a hand-eye correspondence and returns its zero-based index.
+func (s *FrameStore) AddHandEyePair(p frames.HandEyePair) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.handeyeBuffer = append(s.handeyeBuffer, p)
+	return len(s.handeyeBuffer) - 1
+}
+
+// HandEyeBuffer returns a copy of the current hand-eye buffer.
+func (s *FrameStore) HandEyeBuffer() []frames.HandEyePair {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]frames.HandEyePair(nil), s.handeyeBuffer...)
+}
+
+// HandEyeBufferLen returns the number of pairs in the hand-eye buffer.
+func (s *FrameStore) HandEyeBufferLen() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.handeyeBuffer)
+}
+
+// ClearHandEyeBuffer discards all hand-eye pairs and returns the count removed.
+func (s *FrameStore) ClearHandEyeBuffer() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.handeyeBuffer)
+	s.handeyeBuffer = nil
 	return n
 }
 
