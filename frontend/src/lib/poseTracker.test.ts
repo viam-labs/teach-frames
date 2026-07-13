@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, test } from 'vitest'
 import {
   jogCartesian,
   jogJoint,
@@ -19,6 +19,12 @@ import {
   parseArmState,
   toCommand,
   toCommandArgs,
+  handeyeSnapshot,
+  captureHandeyePoint,
+  getHandeyeBuffer,
+  clearHandeyeBuffer,
+  solveHandeye,
+  displayToNativePixel,
 } from './poseTracker'
 
 describe('DoCommand payload builders', () => {
@@ -92,6 +98,43 @@ describe('DoCommand payload builders', () => {
     expect(teachTcpOrientation(0, 0, 1, 90)).toEqual({
       teach_tcp_orientation: { o_x: 0, o_y: 0, o_z: 1, theta: 90 },
     })
+  })
+})
+
+describe('Hand-eye DoCommand payload builders', () => {
+  it('handeyeSnapshot emits an empty verb map', () => {
+    expect(handeyeSnapshot()).toEqual({ handeye_snapshot: {} })
+  })
+
+  it('captureHandeyePoint emits the u/v verb map', () => {
+    expect(captureHandeyePoint(12, 34)).toEqual({ capture_handeye_point: { u: 12, v: 34 } })
+  })
+
+  it('getHandeyeBuffer emits an empty verb map', () => {
+    expect(getHandeyeBuffer()).toEqual({ get_handeye_buffer: {} })
+  })
+
+  it('clearHandeyeBuffer emits an empty verb map', () => {
+    expect(clearHandeyeBuffer()).toEqual({ clear_handeye_buffer: {} })
+  })
+
+  it('solveHandeye emits an empty verb map', () => {
+    expect(solveHandeye()).toEqual({ solve_handeye: {} })
+  })
+})
+
+describe('displayToNativePixel', () => {
+  test('maps a click in the rendered image box to native source pixels', () => {
+    // A 640x480 image rendered into a 320x240 box: a click at (160,120) → (320,240).
+    expect(displayToNativePixel(160, 120, 320, 240, 640, 480)).toEqual({ u: 320, v: 240 })
+  })
+
+  test('clamps to the upper bound', () => {
+    expect(displayToNativePixel(400, 300, 320, 240, 640, 480)).toEqual({ u: 639, v: 479 })
+  })
+
+  test('clamps to the lower bound', () => {
+    expect(displayToNativePixel(-5, -5, 320, 240, 640, 480)).toEqual({ u: 0, v: 0 })
   })
 })
 
