@@ -35,6 +35,8 @@ import (
 //	{"jog_cartesian": {"axis": "x", "step": 5}}               — nudge the TCP by a signed step: x/y/z (mm) translate along the world frame, roll/pitch/yaw (degrees) rotate about the tool frame (errors if no arm is configured or the axis is unknown).
 //	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured).
 //	{"capture_handeye_point": {"u": 0, "v": 0}}              — deproject the clicked pixel against the cached snapshot, read the current TCP world pose, and store the (world, camera) pair (errors if no camera is configured, no snapshot is cached, u/v are missing/non-numeric, or the pixel has no valid depth).
+//	{"get_handeye_buffer": {}}                               — return all (world, camera) pairs currently in the hand-eye capture buffer.
+//	{"clear_handeye_buffer": {}}                             — empty the hand-eye capture buffer and return the count removed.
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -135,6 +137,17 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "capture_handeye_point"):
 		return pt.captureHandEyePoint(ctx, cmd["capture_handeye_point"])
+
+	case has(cmd, "get_handeye_buffer"):
+		buf := pt.store.HandEyeBuffer()
+		pts := make([]interface{}, len(buf))
+		for i, p := range buf {
+			pts[i] = map[string]interface{}{"world": vecToMap(p.World), "camera": vecToMap(p.Camera)}
+		}
+		return map[string]interface{}{"points": pts}, nil
+
+	case has(cmd, "clear_handeye_buffer"):
+		return map[string]interface{}{"cleared": pt.store.ClearHandEyeBuffer()}, nil
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))

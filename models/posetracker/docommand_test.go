@@ -19,6 +19,7 @@ import (
 	"go.viam.com/test"
 
 	tfconfig "github.com/viam-labs/teach-frames/config"
+	"github.com/viam-labs/teach-frames/frames"
 	"github.com/viam-labs/teach-frames/persist"
 	"github.com/viam-labs/teach-frames/posesource"
 )
@@ -1036,4 +1037,21 @@ func TestCaptureHandEyeNoSnapshotErrors(t *testing.T) {
 	_, err := pt.DoCommand(context.Background(),
 		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
 	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// --- get_handeye_buffer / clear_handeye_buffer tests ---
+
+func TestGetAndClearHandEyeBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.store.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
+
+	got, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	pts := got["points"].([]interface{})
+	test.That(t, len(pts), test.ShouldEqual, 1)
+
+	cleared, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, cleared["cleared"], test.ShouldEqual, 1)
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
 }
