@@ -1,9 +1,12 @@
 package posetracker
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"image"
+	_ "image/jpeg" // register the JPEG decoder for image.DecodeConfig
 	"math"
 	"testing"
 
@@ -961,9 +964,22 @@ func TestHandEyeSnapshot(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, resp["width"], test.ShouldEqual, 4)
 	test.That(t, resp["height"], test.ShouldEqual, 4)
-	test.That(t, resp["image"], test.ShouldNotBeNil) // base64 JPEG string
-	// cached for capture:
+
+	// The returned image must be a valid 4x4 JPEG, not just a non-nil string.
+	encoded, ok := resp["image"].(string)
+	test.That(t, ok, test.ShouldBeTrue)
+	decoded, derr := base64.StdEncoding.DecodeString(encoded)
+	test.That(t, derr, test.ShouldBeNil)
+	cfg, format, cerr := image.DecodeConfig(bytes.NewReader(decoded))
+	test.That(t, cerr, test.ShouldBeNil)
+	test.That(t, format, test.ShouldEqual, "jpeg")
+	test.That(t, cfg.Width, test.ShouldEqual, 4)
+	test.That(t, cfg.Height, test.ShouldEqual, 4)
+
+	// The cache must hold THE snapshot just acquired (identity, not a fresh/empty one).
 	test.That(t, pt.lastSnapshot, test.ShouldNotBeNil)
+	test.That(t, pt.lastSnapshot.Intr, test.ShouldEqual, intr)
+	test.That(t, pt.lastSnapshot.Depth, test.ShouldEqual, dm)
 }
 
 func TestHandEyeSnapshotNoCameraErrors(t *testing.T) {
