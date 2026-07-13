@@ -121,6 +121,9 @@ func ComputeCameraToWorld(pairs []HandEyePair) (spatialmath.Pose, float64, error
 	}
 	residual := math.Sqrt(sumSq / float64(n))
 
+	if math.IsNaN(residual) || math.IsInf(residual, 0) {
+		return nil, 0, errors.New("hand-eye solve produced a non-finite result")
+	}
 	return pose, residual, nil
 }
 

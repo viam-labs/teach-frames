@@ -30,6 +30,71 @@ func TestComputeCameraToWorldRoundTrip(t *testing.T) {
 	test.That(t, spatialmath.PoseAlmostEqualEps(got, truth, 1e-6), test.ShouldBeTrue)
 }
 
+// rotDet returns the determinant of an orientation's 3x3 rotation matrix
+// (+1 for a proper right-handed rotation, -1 for a reflection).
+func rotDet(o spatialmath.Orientation) float64 {
+	rm := o.RotationMatrix()
+	return rm.Row(0).Cross(rm.Row(1)).Dot(rm.Row(2))
+}
+
+func TestComputeCameraToWorldCoplanarAccepted(t *testing.T) {
+	// A general (out-of-plane) rotation + translation. 3 non-collinear but
+	// COPLANAR camera points (all Z=0) fully determine the rigid transform.
+	rot := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Roll: 0.3, Pitch: -0.4, Yaw: 1.1})
+	truth := spatialmath.NewPose(r3.Vector{X: 30, Y: 60, Z: -20}, rot.Orientation())
+
+	camPts := []r3.Vector{{X: 0, Y: 0, Z: 0}, {X: 100, Y: 0, Z: 0}, {X: 0, Y: 100, Z: 0}}
+	pairs := make([]HandEyePair, len(camPts))
+	for i, c := range camPts {
+		w := spatialmath.Compose(truth, spatialmath.NewPoseFromPoint(c)).Point()
+		pairs[i] = HandEyePair{Camera: c, World: w}
+	}
+
+	got, residual, err := ComputeCameraToWorld(pairs)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, residual, test.ShouldBeLessThan, 1e-6)
+	test.That(t, spatialmath.PoseAlmostEqualEps(got, truth, 1e-6), test.ShouldBeTrue)
+	test.That(t, rotDet(got.Orientation()), test.ShouldAlmostEqual, 1.0)
+}
+
+func TestComputeCameraToWorldNoisyResidual(t *testing.T) {
+	// Same truth as the round-trip test, but with one world point perturbed by
+	// 5 mm. The solve must succeed and report a sensible POSITIVE residual.
+	rot := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: math.Pi / 2})
+	truth := spatialmath.NewPose(r3.Vector{X: 100, Y: -50, Z: 300}, rot.Orientation())
+
+	camPts := []r3.Vector{{X: 0, Y: 0, Z: 0}, {X: 100, Y: 0, Z: 0}, {X: 0, Y: 100, Z: 0}, {X: 0, Y: 0, Z: 100}}
+	pairs := make([]HandEyePair, len(camPts))
+	for i, c := range camPts {
+		w := spatialmath.Compose(truth, spatialmath.NewPoseFromPoint(c)).Point()
+		pairs[i] = HandEyePair{Camera: c, World: w}
+	}
+	pairs[1].World = pairs[1].World.Add(r3.Vector{X: 5}) // inject 5 mm of noise
+
+	_, residual, err := ComputeCameraToWorld(pairs)
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, residual, test.ShouldBeGreaterThan, 0.1)
+	test.That(t, residual, test.ShouldBeLessThan, 5.0)
+}
+
+func TestComputeCameraToWorldReflectionCorrected(t *testing.T) {
+	// World points are a mirror image of the camera points (Z negated). The raw
+	// SVD best-fit orthogonal matrix here is a reflection (det -1); the diag(1,1,d)
+	// correction must return the nearest PROPER rotation (det +1) instead.
+	camPts := []r3.Vector{{X: 0, Y: 0, Z: 0}, {X: 100, Y: 0, Z: 0}, {X: 0, Y: 100, Z: 0}, {X: 0, Y: 0, Z: 100}}
+	pairs := make([]HandEyePair, len(camPts))
+	for i, c := range camPts {
+		pairs[i] = HandEyePair{Camera: c, World: r3.Vector{X: c.X, Y: c.Y, Z: -c.Z}}
+	}
+
+	got, residual, err := ComputeCameraToWorld(pairs)
+	test.That(t, err, test.ShouldBeNil)
+	// A proper rotation cannot fit a reflection, so residual is non-trivial.
+	test.That(t, residual, test.ShouldBeGreaterThan, 0.0)
+	// The result must be a valid right-handed rotation, not a reflection.
+	test.That(t, rotDet(got.Orientation()), test.ShouldAlmostEqual, 1.0)
+}
+
 func TestComputeCameraToWorldRejectsCollinear(t *testing.T) {
 	pairs := []HandEyePair{
 		{Camera: r3.Vector{X: 0}, World: r3.Vector{X: 0}},
@@ -68,7 +133,7 @@ func TestDeprojectZeroDepthErrors(t *testing.T) {
 func TestDeprojectOutOfBoundsErrors(t *testing.T) {
 	intr := &transform.PinholeCameraIntrinsics{Width: 100, Height: 100, Fx: 50, Fy: 50, Ppx: 50, Ppy: 50}
 	dm := rimage.NewEmptyDepthMap(100, 100)
-	_, err := Deproject(intr, dm, 200, 10)
+	pt := image.Pt(200, 10) // column beyond the 100px width
+	_, err := Deproject(intr, dm, pt.X, pt.Y)
 	test.That(t, err, test.ShouldNotBeNil)
-	_ = image.Point{} // keep image import used if trimmed
 }
