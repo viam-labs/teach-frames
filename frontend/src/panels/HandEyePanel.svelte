@@ -101,6 +101,12 @@
   {#if capture.error}
     <p class="error">{capture.error.message}</p>
   {/if}
+  {#if clear.error}
+    <p class="error">{clear.error.message}</p>
+  {/if}
+  {#if buffer.error}
+    <p class="error">{buffer.error.message}</p>
+  {/if}
 
   {#if snapshot}
     <div class="view">
