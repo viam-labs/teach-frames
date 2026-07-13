@@ -221,6 +221,10 @@ func TestHandEyeBuffer(t *testing.T) {
 	test.That(t, i1, test.ShouldEqual, 1)
 	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 2)
 
+	// Hand-eye buffer is independent of the frame and TCP buffers.
+	test.That(t, s.BufferLen(), test.ShouldEqual, 0)
+	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 0)
+
 	buf := s.HandEyeBuffer()
 	test.That(t, len(buf), test.ShouldEqual, 2)
 	test.That(t, buf[0].World.X, test.ShouldEqual, 1)

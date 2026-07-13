@@ -100,6 +100,7 @@ func (s *FrameStore) AddHandEyePair(p frames.HandEyePair) int {
 }
 
 // HandEyeBuffer returns a copy of the current hand-eye buffer.
+// Mutating the returned slice does not affect the store.
 func (s *FrameStore) HandEyeBuffer() []frames.HandEyePair {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
