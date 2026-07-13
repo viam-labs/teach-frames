@@ -1009,12 +1009,25 @@ func TestCaptureHandEyePoint(t *testing.T) {
 	resp, err := pt.DoCommand(context.Background(),
 		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 3.0, "v": 1.0}})
 	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["index"], test.ShouldEqual, 0)
 	test.That(t, resp["buffer_len"], test.ShouldEqual, 1)
 	world := resp["world"].(map[string]interface{})
 	test.That(t, world["x"], test.ShouldEqual, 10.0)
 	cam := resp["camera"].(map[string]interface{})
 	// x = (3-2)/2 * 1000 = 500
 	test.That(t, cam["x"], test.ShouldEqual, 500.0)
+	// y = (1-2)/2 * 1000 = -500
+	test.That(t, cam["y"], test.ShouldEqual, -500.0)
+	// z = depth = 1000
+	test.That(t, cam["z"], test.ShouldEqual, 1000.0)
+}
+
+func TestCaptureHandEyeNoCameraErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = nil
+	_, err := pt.DoCommand(context.Background(),
+		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
 }
 
 func TestCaptureHandEyeNoSnapshotErrors(t *testing.T) {

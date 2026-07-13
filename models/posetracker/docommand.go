@@ -330,7 +330,7 @@ func (pt *teachTracker) teachTCPPosition(ctx context.Context) (map[string]interf
 	pt.store.ClearTCPBuffer()
 	return map[string]interface{}{
 		"committed":    true,
-		"offset":       map[string]interface{}{"x": offset.X, "y": offset.Y, "z": offset.Z},
+		"offset":       vecToMap(offset),
 		"residual_rms": residual,
 	}, nil
 }
