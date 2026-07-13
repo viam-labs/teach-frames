@@ -69,7 +69,7 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 | `capture_handeye_point` | `{"u": <pixel-col>, "v": <pixel-row>}` | Deprojects the clicked pixel against the cached snapshot (requires a prior `handeye_snapshot`), reads the current TCP world pose, and appends the `(world, camera)` pair to the hand-eye buffer. Errors if no `camera` is configured, no snapshot is cached, `u`/`v` are missing or non-numeric, or the pixel has no valid depth. | `index` (0-based position), `buffer_len`, `world` (x/y/z), `camera` (x/y/z) |
 | `get_handeye_buffer` | `{}` | Returns all `(world, camera)` pairs currently in the hand-eye buffer. | `points` (array of `{"world": {x,y,z}, "camera": {x,y,z}}`) |
 | `clear_handeye_buffer` | `{}` | Empties the hand-eye buffer. | `cleared` (count removed) |
-| `solve_handeye` | `{}` | Solves the camera→world transform over the hand-eye buffer (Kabsch, ≥3 non-collinear points), persists it to the `camera` component's own `frame` (parent `world`; requires platform-API creds), reports the fit residual, and clears the buffer on success. Errors (buffer preserved) if persistence or the `camera` dependency is not configured, or the solve fails (too few or collinear points). | `committed` (bool), `pose` (x/y/z/o_x/o_y/o_z/theta), `residual_rms` (fit residual, mm), `parent` (`"world"`), `orientation` (o_x/o_y/o_z/theta) |
+| `solve_handeye` | `{}` | Solves the camera→destination-frame transform over the hand-eye buffer (Kabsch, ≥3 non-collinear points), persists it to the `camera` component's own `frame` (parent = the configured `destination_frame`, default `world`; requires platform-API creds), reports the fit residual, and clears the buffer on success. Errors (buffer preserved) if persistence or the `camera` dependency is not configured, or the solve fails (too few or collinear points). | `committed` (bool), `pose` (x/y/z/o_x/o_y/o_z/theta), `residual_rms` (fit residual, mm), `parent` (the configured `destination_frame`, default `"world"`), `orientation` (o_x/o_y/o_z/theta) |
 
 ### `define_frame` methods
 
@@ -213,9 +213,9 @@ camera streaming. An RGBD (color + depth) camera exposing intrinsics is
 required; a color-only camera cannot be deprojected and `handeye_snapshot`
 surfaces a descriptive error in that case (see `posesource.RGBDCamera`).
 
-On success, the solved `camera → world` pose is persisted directly to the
+On success, the solved `camera → destination-frame` pose is persisted directly to the
 **camera component's own `frame` config** (`translation` and `orientation`,
-with `parent` set to `world`) via the same platform-API read-modify-write path
+with `parent` set to the configured `destination_frame`, default `world`) via the same platform-API read-modify-write path
 and credentials as frame and TCP teaching (see
 [Persistence and credentials](#persistence-and-credentials)), and the hand-eye
 buffer is cleared. If persistence is disabled, or the `camera` dependency is
@@ -243,7 +243,7 @@ tracked follow-ups.
 
 ## Persistence and credentials
 
-Taught frames are persisted by patching this component's own `attributes.frames` in the robot part config via the Viam app API (read-modify-write on `GetRobotPart` / `UpdateRobotPart`). TCP teaching (`teach_tcp_position` / `teach_tcp_orientation`) uses the same read-modify-write mechanism and credentials, but patches the `frame` of the configured `tcp_component` instead. Hand-eye calibration (`solve_handeye`) also uses the same mechanism and credentials, but patches the `frame` of the configured `camera` instead (parent `world`).
+Taught frames are persisted by patching this component's own `attributes.frames` in the robot part config via the Viam app API (read-modify-write on `GetRobotPart` / `UpdateRobotPart`). TCP teaching (`teach_tcp_position` / `teach_tcp_orientation`) uses the same read-modify-write mechanism and credentials, but patches the `frame` of the configured `tcp_component` instead. Hand-eye calibration (`solve_handeye`) also uses the same mechanism and credentials, but patches the `frame` of the configured `camera` instead (parent = the configured `destination_frame`, default `world`).
 
 The module reads credentials from the standard platform-API environment variables injected by the Viam agent:
 
@@ -318,7 +318,7 @@ The app-API persistence path requires a live cloud connection and has no unit te
 10. **Calibrate the TCP first.** Run the [TCP teaching](#tcp-teaching) checklist (or otherwise ensure `tcp_component.frame` is already taught) so captured world points are accurate.
 11. **Touch and click.** For at least 4 points spread across the workspace (varied X, Y, *and* Z — not all on one plane or line): jog the TCP to touch the point, send `{"handeye_snapshot": {}}`, then send `{"capture_handeye_point": {"u": ..., "v": ...}}` for the clicked pixel. Confirm each response's `buffer_len` increments.
 12. **Solve.** Send `{"solve_handeye": {}}`. Confirm `"committed": true` and a low `residual_rms` (well under a few mm for careful touches) in the response.
-13. **Verify config persistence.** Open the machine config in the Viam app. Confirm the camera component's `frame` was patched with `parent: "world"` and the solved `translation`/`orientation`.
+13. **Verify config persistence.** Open the machine config in the Viam app. Confirm the camera component's `frame` was patched with `parent` set to the configured `destination_frame` (default `"world"`) and the solved `translation`/`orientation`.
 14. **Verify visualization.** Open the Viam visualizer. Confirm the camera renders at the correct world location/orientation in the scene (e.g. its frustum or pose triad lines up with its physical mounting).
 
 ## Teach Pendant application

@@ -1091,6 +1091,36 @@ func TestSolveHandEye(t *testing.T) {
 	test.That(t, fake.SavedTranslation.Z, test.ShouldAlmostEqual, 0.0, 1e-6)
 }
 
+// solveHandEyeIdentityPairs are the identity-transform (world == camera) points
+// reused across solve_handeye tests.
+func solveHandEyeIdentityPairs() []frames.HandEyePair {
+	return []frames.HandEyePair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	}
+}
+
+// TestSolveHandEyePersistsCaptureFrameAsParent guards against silently persisting
+// the camera under "world" when the captured world points are actually expressed
+// in a non-world destination_frame. The Kabsch solve yields camera->destFrame, so
+// the persisted parent (and the response's "parent") must be destFrame.
+func TestSolveHandEyePersistsCaptureFrameAsParent(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "base"})
+	// Confirm the constructor propagated DestinationFrame into destFrame.
+	test.That(t, pt.destFrame, test.ShouldEqual, "base")
+	pt.cameraName = "cam"
+	for _, p := range solveHandEyeIdentityPairs() {
+		pt.store.AddHandEyePair(p)
+	}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["parent"], test.ShouldEqual, "base")
+	test.That(t, pt.persist.(*persist.Fake).SavedParent, test.ShouldEqual, "base")
+}
+
 func TestSolveHandEyePersistErrorPreservesBuffer(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraName = "cam"

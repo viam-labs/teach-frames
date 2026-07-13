@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/golang/geo/r3"
-	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/rimage"
 	rutils "go.viam.com/rdk/utils"
 
@@ -92,8 +91,9 @@ func vecToMap(v r3.Vector) map[string]interface{} {
 	return map[string]interface{}{"x": v.X, "y": v.Y, "z": v.Z}
 }
 
-// solveHandEye runs the Kabsch camera->world solve over the buffer, persists the
-// result to the camera component's own frame (parent world), reports the residual,
+// solveHandEye runs the Kabsch camera->destination-frame solve over the buffer,
+// persists the result to the camera component's own frame (parent = pt.destFrame,
+// the frame the captured world points are expressed in), reports the residual,
 // and clears the buffer on success. On any failure the buffer is preserved.
 func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{}, error) {
 	if pt.persist == nil {
@@ -113,9 +113,14 @@ func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{
 	pt.commitMu.Lock()
 	defer pt.commitMu.Unlock()
 
+	// The captured world points come from pt.source.Capture, which expresses
+	// poses in the configured destination frame (pt.destFrame). The Kabsch solve
+	// therefore yields camera->destFrame, so persist that as the camera's parent —
+	// NOT the literal "world" (which would silently miscalibrate when
+	// destination_frame is set to something other than the default "world").
 	translation := pose.Point()
 	orientation := pose.Orientation()
-	if perr := pt.persist.SaveComponentFrame(ctx, pt.cameraName, referenceframe.World, &translation, orientation); perr != nil {
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.cameraName, pt.destFrame, &translation, orientation); perr != nil {
 		return nil, fmt.Errorf("persist failed, camera calibration not committed: %w", perr)
 	}
 
@@ -125,7 +130,7 @@ func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{
 		"committed":    true,
 		"pose":         poseToMap(pose),
 		"residual_rms": residual,
-		"parent":       referenceframe.World,
+		"parent":       pt.destFrame,
 		"orientation":  map[string]interface{}{"o_x": ov.OX, "o_y": ov.OY, "o_z": ov.OZ, "theta": ov.Theta},
 	}, nil
 }
