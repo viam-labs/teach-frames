@@ -3,11 +3,14 @@ package posetracker
 import (
 	"context"
 	"errors"
+	"image"
 	"math"
 	"testing"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/rimage"
+	"go.viam.com/rdk/rimage/transform"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/testutils/inject"
 	"go.viam.com/test"
@@ -944,4 +947,28 @@ func TestJogCartesianAllAxes(t *testing.T) {
 			test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
 		})
 	}
+}
+
+func TestHandEyeSnapshot(t *testing.T) {
+	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+	dm := rimage.NewEmptyDepthMap(4, 4)
+	dm.Set(1, 1, rimage.Depth(500))
+	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["width"], test.ShouldEqual, 4)
+	test.That(t, resp["height"], test.ShouldEqual, 4)
+	test.That(t, resp["image"], test.ShouldNotBeNil) // base64 JPEG string
+	// cached for capture:
+	test.That(t, pt.lastSnapshot, test.ShouldNotBeNil)
+}
+
+func TestHandEyeSnapshotNoCameraErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
 }

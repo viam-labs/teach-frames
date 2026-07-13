@@ -33,6 +33,7 @@ import (
 //	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
 //	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
 //	{"jog_cartesian": {"axis": "x", "step": 5}}               — nudge the TCP by a signed step: x/y/z (mm) translate along the world frame, roll/pitch/yaw (degrees) rotate about the tool frame (errors if no arm is configured or the axis is unknown).
+//	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured).
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -127,6 +128,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "jog_cartesian"):
 		return pt.jogCartesian(ctx, cmd["jog_cartesian"])
+
+	case has(cmd, "handeye_snapshot"):
+		return pt.handeyeSnapshot(ctx)
 	}
 
 	return nil, fmt.Errorf("unknown command: %v", keysOf(cmd))
