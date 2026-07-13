@@ -988,3 +988,39 @@ func TestHandEyeSnapshotNoCameraErrors(t *testing.T) {
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
 }
+
+func TestCaptureHandEyePoint(t *testing.T) {
+	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+	dm := rimage.NewEmptyDepthMap(4, 4)
+	dm.Set(3, 1, rimage.Depth(1000))
+	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+	// The Fake PoseSource returns a queued world pose for Capture():
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 10, Y: 20, Z: 30}),
+	}}
+
+	// Must snapshot before capture (populates the cache).
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(),
+		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 3.0, "v": 1.0}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["buffer_len"], test.ShouldEqual, 1)
+	world := resp["world"].(map[string]interface{})
+	test.That(t, world["x"], test.ShouldEqual, 10.0)
+	cam := resp["camera"].(map[string]interface{})
+	// x = (3-2)/2 * 1000 = 500
+	test.That(t, cam["x"], test.ShouldEqual, 500.0)
+}
+
+func TestCaptureHandEyeNoSnapshotErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{} // no snapshot taken yet
+	_, err := pt.DoCommand(context.Background(),
+		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
