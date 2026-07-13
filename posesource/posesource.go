@@ -129,7 +129,32 @@ func (c *RGBDCamera) Snapshot(ctx context.Context) (*Snapshot, error) {
 	if props.IntrinsicParams == nil {
 		return nil, errors.New("camera exposes no intrinsics; cannot deproject (configure intrinsic_parameters on the camera)")
 	}
+	b := colorImg.Bounds()
+	if err := checkResolutions(
+		b.Dx(), b.Dy(),
+		dm.Width(), dm.Height(),
+		props.IntrinsicParams.Width, props.IntrinsicParams.Height,
+	); err != nil {
+		return nil, err
+	}
 	return &Snapshot{RGB: colorImg, Depth: dm, Intr: props.IntrinsicParams}, nil
+}
+
+// checkResolutions verifies the RGB image, depth map, and intrinsics all describe
+// one resolution. A manual pick maps a click in RGB pixel space, deprojects it at
+// those coordinates in the depth map, and uses the intrinsics' principal point /
+// focal length; if the three disagree (e.g. depth not hardware-registered to
+// color), the pick silently resolves to a wrong physical point. This turns that
+// silent miscalibration into an actionable error.
+func checkResolutions(rgbW, rgbH, depthW, depthH, intrW, intrH int) error {
+	if rgbW != depthW || rgbH != depthH || rgbW != intrW || rgbH != intrH {
+		return fmt.Errorf(
+			"camera RGB (%dx%d), depth (%dx%d), and intrinsics (%dx%d) must share one resolution; "+
+				"hand-eye manual pick requires depth registered/aligned to color",
+			rgbW, rgbH, depthW, depthH, intrW, intrH,
+		)
+	}
+	return nil
 }
 
 // selectColorDepth picks the color and depth images from a camera's Images()

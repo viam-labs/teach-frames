@@ -160,6 +160,25 @@ func TestSelectColorDepth(t *testing.T) {
 	})
 }
 
+func TestCheckResolutions(t *testing.T) {
+	t.Run("all agree", func(t *testing.T) {
+		test.That(t, checkResolutions(1280, 720, 1280, 720, 1280, 720), test.ShouldBeNil)
+	})
+	t.Run("depth differs from color", func(t *testing.T) {
+		err := checkResolutions(1280, 720, 848, 480, 1280, 720)
+		test.That(t, err, test.ShouldNotBeNil)
+		test.That(t, err.Error(), test.ShouldContainSubstring, "848x480")
+	})
+	t.Run("intrinsics differ from color", func(t *testing.T) {
+		err := checkResolutions(1280, 720, 1280, 720, 848, 480)
+		test.That(t, err, test.ShouldNotBeNil)
+	})
+	t.Run("height mismatch only", func(t *testing.T) {
+		err := checkResolutions(640, 480, 640, 400, 640, 480)
+		test.That(t, err, test.ShouldNotBeNil)
+	})
+}
+
 func TestFakeCameraSourceSnapshot(t *testing.T) {
 	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
 	dm := rimage.NewEmptyDepthMap(4, 4)
