@@ -2,10 +2,13 @@ package posesource
 
 import (
 	"context"
+	"image"
 	"testing"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/rimage"
+	"go.viam.com/rdk/rimage/transform"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/test"
 
@@ -77,4 +80,18 @@ func TestFakeFlangeSource(t *testing.T) {
 func TestFlangeSourceImplementsInterface(t *testing.T) {
 	var _ FlangeSource = (*ArmSource)(nil)
 	var _ FlangeSource = (*FakeFlange)(nil)
+}
+
+func TestFakeCameraSourceSnapshot(t *testing.T) {
+	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+	dm := rimage.NewEmptyDepthMap(4, 4)
+	dm.Set(1, 1, rimage.Depth(500))
+	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+
+	src := &FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+	snap, err := src.Snapshot(context.Background())
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, snap.Intr.Fx, test.ShouldEqual, 2.0)
+	test.That(t, snap.Depth.GetDepth(1, 1), test.ShouldEqual, rimage.Depth(500))
+	test.That(t, snap.RGB, test.ShouldNotBeNil)
 }
