@@ -1083,6 +1083,36 @@ func TestSolveHandEye(t *testing.T) {
 	test.That(t, fake.SavedComponent, test.ShouldEqual, "cam")
 	test.That(t, fake.SavedParent, test.ShouldEqual, "world")
 	test.That(t, fake.SavedTranslation, test.ShouldNotBeNil)
+	// The persisted translation must be the SOLVED transform, not just non-nil:
+	// for identity input (world == camera) the translation is ~{0,0,0}. A
+	// transposed-rotation or wrong-pose bug would still be non-nil but wrong.
+	test.That(t, fake.SavedTranslation.X, test.ShouldAlmostEqual, 0.0, 1e-6)
+	test.That(t, fake.SavedTranslation.Y, test.ShouldAlmostEqual, 0.0, 1e-6)
+	test.That(t, fake.SavedTranslation.Z, test.ShouldAlmostEqual, 0.0, 1e-6)
+}
+
+func TestSolveHandEyePersistErrorPreservesBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraName = "cam"
+	// The solve will succeed, but the component-frame write fails: this exercises
+	// the clear-after-persist ordering (buffer must survive a persist failure).
+	pt.persist.(*persist.Fake).FrameErr = errors.New("boom")
+
+	// Identity transform: solve succeeds, so we reach the persist step.
+	pts := []frames.HandEyePair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	}
+	for _, p := range pts {
+		pt.store.AddHandEyePair(p)
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	// Buffer preserved because the persist failed after a successful solve:
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 4)
 }
 
 func TestSolveHandEyePersistDisabledErrors(t *testing.T) {
