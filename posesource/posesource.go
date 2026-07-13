@@ -108,32 +108,15 @@ type RGBDCamera struct {
 }
 
 // Snapshot fetches color+depth via Images() and intrinsics via Properties().
-// It selects the color and depth images by mime type, falling back to source
-// name ("color"/"depth") when mime types are ambiguous.
+// See selectColorDepth for how the color and depth streams are chosen.
 func (c *RGBDCamera) Snapshot(ctx context.Context) (*Snapshot, error) {
 	imgs, _, err := c.Cam.Images(ctx, nil, nil)
 	if err != nil {
+		return nil, fmt.Errorf("could not fetch camera images: %w", err)
+	}
+	colorImg, depthImg, err := selectColorDepth(ctx, imgs)
+	if err != nil {
 		return nil, err
-	}
-	var colorImg, depthImg image.Image
-	for i := range imgs {
-		ni := &imgs[i]
-		img, ierr := ni.Image(ctx)
-		if ierr != nil {
-			return nil, ierr
-		}
-		switch {
-		case ni.MimeType() == rutils.MimeTypeRawDepth || ni.SourceName == "depth":
-			depthImg = img
-		case ni.SourceName == "color" || colorImg == nil:
-			colorImg = img
-		}
-	}
-	if colorImg == nil {
-		return nil, errors.New("camera returned no color image")
-	}
-	if depthImg == nil {
-		return nil, errors.New("camera returned no depth image; an RGBD/depth camera is required")
 	}
 	dm, err := rimage.ConvertImageToDepthMap(ctx, depthImg)
 	if err != nil {
@@ -141,12 +124,52 @@ func (c *RGBDCamera) Snapshot(ctx context.Context) (*Snapshot, error) {
 	}
 	props, err := c.Cam.Properties(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not fetch camera properties: %w", err)
 	}
 	if props.IntrinsicParams == nil {
 		return nil, errors.New("camera exposes no intrinsics; cannot deproject (configure intrinsic_parameters on the camera)")
 	}
 	return &Snapshot{RGB: colorImg, Depth: dm, Intr: props.IntrinsicParams}, nil
+}
+
+// selectColorDepth picks the color and depth images from a camera's Images()
+// result. Depth is the stream whose mime type is raw depth or whose source name
+// is "depth". Color prefers an explicitly-labeled "color" source; absent that it
+// falls back to an unlabeled (empty source name) non-depth stream. Explicitly-
+// named non-color streams such as "infrared" are never assumed to be color, so a
+// camera emitting only infrared + depth reports "no color image" rather than
+// silently deprojecting against IR pixels. Returns distinct errors when no color
+// or no depth stream is found.
+func selectColorDepth(ctx context.Context, imgs []camera.NamedImage) (color, depth image.Image, err error) {
+	var labeledColor, fallbackColor image.Image
+	for i := range imgs {
+		ni := &imgs[i]
+		img, ierr := ni.Image(ctx)
+		if ierr != nil {
+			return nil, nil, fmt.Errorf("could not decode %q image: %w", ni.SourceName, ierr)
+		}
+		switch {
+		case ni.MimeType() == rutils.MimeTypeRawDepth || ni.SourceName == "depth":
+			depth = img
+		case ni.SourceName == "color":
+			labeledColor = img
+		case ni.SourceName == "" && fallbackColor == nil:
+			// An unlabeled, non-raw-depth stream is assumed to be color, but only
+			// when no explicitly-labeled "color" stream is present.
+			fallbackColor = img
+		}
+	}
+	color = labeledColor
+	if color == nil {
+		color = fallbackColor
+	}
+	if color == nil {
+		return nil, nil, errors.New("camera returned no color image")
+	}
+	if depth == nil {
+		return nil, nil, errors.New("camera returned no depth image; an RGBD/depth camera is required")
+	}
+	return color, depth, nil
 }
 
 // FakeCamera returns a fixed snapshot. For tests.
