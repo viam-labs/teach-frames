@@ -3,6 +3,7 @@ package posetracker
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"go.viam.com/rdk/components/arm"
@@ -25,6 +26,15 @@ var Model = resource.NewModel("viam-labs", "teach-frames", "pose-tracker")
 // defaultMotionService is the motion service name used when motion_service is omitted.
 const defaultMotionService = "builtin"
 
+// Camera mount modes. The mount is a physical fact that never changes at
+// runtime, so it belongs in config rather than being inferred per command —
+// which also lets the module refuse a flow that contradicts the hardware
+// instead of silently solving garbage.
+const (
+	mountEyeToHand = "eye_to_hand"
+	mountEyeInHand = "eye_in_hand"
+)
+
 func init() {
 	resource.RegisterComponent(posetracker.API, Model,
 		resource.Registration[posetracker.PoseTracker, *Config]{
@@ -40,6 +50,7 @@ type Config struct {
 	DestinationFrame string               `json:"destination_frame"`
 	Arm              string               `json:"arm"`
 	Camera           string               `json:"camera"`
+	CameraMount      string               `json:"camera_mount"`
 	Frames           []tfconfig.FrameSpec `json:"frames"`
 }
 
@@ -56,6 +67,23 @@ func (c *Config) Validate(path string) ([]string, []string, error) {
 	if c.Camera != "" {
 		deps = append(deps, c.Camera)
 	}
+
+	switch c.cameraMountOrDefault() {
+	case mountEyeToHand:
+	case mountEyeInHand:
+		// Eye-in-hand needs the arm name to ask the motion service for flange
+		// poses, and the camera to attach the solved frame to.
+		if c.Arm == "" {
+			return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "arm")
+		}
+		if c.Camera == "" {
+			return nil, nil, resource.NewConfigValidationFieldRequiredError(path, "camera")
+		}
+	default:
+		return nil, nil, resource.NewConfigValidationError(path, fmt.Errorf(
+			"camera_mount must be %q or %q, got %q", mountEyeToHand, mountEyeInHand, c.CameraMount))
+	}
+
 	return deps, nil, nil
 }
 
@@ -66,6 +94,15 @@ func (c *Config) motionServiceOrDefault() string {
 		return defaultMotionService
 	}
 	return c.MotionService
+}
+
+// cameraMountOrDefault returns the configured mount, defaulting to eye_to_hand so
+// configs written before this attribute existed keep working unchanged.
+func (c *Config) cameraMountOrDefault() string {
+	if c.CameraMount == "" {
+		return mountEyeToHand
+	}
+	return c.CameraMount
 }
 
 // teachTracker is the concrete PoseTracker implementation.

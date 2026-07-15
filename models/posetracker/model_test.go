@@ -278,3 +278,36 @@ func TestConfigValidateCameraDependency(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, deps, test.ShouldContain, "cam")
 }
+
+func TestValidateCameraMountDefaultsToEyeToHand(t *testing.T) {
+	c := &Config{TCPComponent: "arm"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, c.cameraMountOrDefault(), test.ShouldEqual, mountEyeToHand)
+}
+
+func TestValidateRejectsUnknownCameraMount(t *testing.T) {
+	c := &Config{TCPComponent: "arm", CameraMount: "eye_on_stalk"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestValidateEyeInHandRequiresArm(t *testing.T) {
+	c := &Config{TCPComponent: "arm", CameraMount: mountEyeInHand, Camera: "cam"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestValidateEyeInHandRequiresCamera(t *testing.T) {
+	c := &Config{TCPComponent: "arm", CameraMount: mountEyeInHand, Arm: "ur5"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestValidateEyeInHandAccepted(t *testing.T) {
+	c := &Config{TCPComponent: "tcp", CameraMount: mountEyeInHand, Arm: "ur5", Camera: "cam"}
+	deps, _, err := c.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, deps, test.ShouldContain, "ur5")
+	test.That(t, deps, test.ShouldContain, "cam")
+}
