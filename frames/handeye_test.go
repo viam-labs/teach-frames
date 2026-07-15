@@ -3,6 +3,7 @@ package frames
 import (
 	"image"
 	"math"
+	"math/rand"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -28,6 +29,116 @@ func TestComputeCameraToWorldRoundTrip(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, residual, test.ShouldBeLessThan, 1e-6)
 	test.That(t, spatialmath.PoseAlmostEqualEps(got, truth, 1e-6), test.ShouldBeTrue)
+}
+
+// degenerateTruth is a non-identity transform used by the degeneracy tests, so a
+// solver that wrongly returns identity cannot accidentally look correct.
+func degenerateTruth() spatialmath.Pose {
+	return spatialmath.NewPose(
+		r3.Vector{X: 100, Y: -50, Z: 300},
+		&spatialmath.EulerAngles{Roll: 0.4, Pitch: 0.3, Yaw: 0.65},
+	)
+}
+
+// TestComputeCameraToWorldRejectsCoincidentCameraPoints covers the case where
+// every camera point is identical. The centered camera matrix is then all zeros,
+// so the relative collinearity test reduces to 0 < 1e-6*0, which is false — it
+// cannot catch this on its own.
+func TestComputeCameraToWorldRejectsCoincidentCameraPoints(t *testing.T) {
+	truth := degenerateTruth()
+	c := r3.Vector{X: 10, Y: 20, Z: 500}
+	w := spatialmath.Compose(truth, spatialmath.NewPoseFromPoint(c)).Point()
+
+	pairs := make([]HandEyePair, 4)
+	for i := range pairs {
+		pairs[i] = HandEyePair{Camera: c, World: w}
+	}
+
+	_, _, err := ComputeCameraToWorld(pairs)
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// TestComputeCameraToWorldRejectsReferenceSideDegeneracy is the important one.
+// When the world points are identical but the camera points scatter by sensor
+// noise, w-worldMean is zero for every pair, so H is exactly zero and the solve
+// returns identity rotation regardless of the truth. The camera cloud looks
+// perfectly healthy, so no camera-side check can see this. The residual is no
+// help either: it reports ~1mm, which reads as an excellent calibration while
+// the answer is hundreds of mm wrong.
+//
+// The noise is load-bearing. Without it the camera points coincide too, and the
+// case would be caught by a camera-side check alone — proving nothing.
+func TestComputeCameraToWorldRejectsReferenceSideDegeneracy(t *testing.T) {
+	truth := degenerateTruth()
+	rng := rand.New(rand.NewSource(42))
+	baseCam := r3.Vector{X: 10, Y: 20, Z: 500}
+	w := spatialmath.Compose(truth, spatialmath.NewPoseFromPoint(baseCam)).Point()
+
+	pairs := make([]HandEyePair, 4)
+	for i := range pairs {
+		pairs[i] = HandEyePair{
+			Camera: r3.Vector{
+				X: baseCam.X + rng.NormFloat64(),
+				Y: baseCam.Y + rng.NormFloat64(),
+				Z: baseCam.Z + rng.NormFloat64(),
+			},
+			World: w, // identical for every pair: the arm never moved
+		}
+	}
+
+	_, _, err := ComputeCameraToWorld(pairs)
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// buildJoggedPairs models the real geometry: a fixed target viewed from n flange
+// poses that differ by jog mm, with sigma mm of camera noise. A jog of 0 means
+// the operator never moved the arm.
+func buildJoggedPairs(truth spatialmath.Pose, jog, sigma float64, n int, seed int64) []HandEyePair {
+	rng := rand.New(rand.NewSource(seed))
+	pairs := make([]HandEyePair, n)
+	base := r3.Vector{X: 10, Y: 20, Z: 500}
+	for i := 0; i < n; i++ {
+		c := r3.Vector{
+			X: base.X + jog*float64(i%3),
+			Y: base.Y + jog*float64((i/3)%3),
+			Z: base.Z + jog*float64(i%2),
+		}
+		w := spatialmath.Compose(truth, spatialmath.NewPoseFromPoint(c)).Point()
+		pairs[i] = HandEyePair{
+			Camera: r3.Vector{
+				X: c.X + rng.NormFloat64()*sigma,
+				Y: c.Y + rng.NormFloat64()*sigma,
+				Z: c.Z + rng.NormFloat64()*sigma,
+			},
+			World: w,
+		}
+	}
+	return pairs
+}
+
+// TestComputeCameraToWorldRejectsNearDegenerateSpread covers the hardware form of
+// the failure. An arm that was never deliberately jogged still reports slightly
+// different poses (encoder quantization), so the world spread is small but not
+// zero — which any absolute floor conservative enough to be safe would miss.
+func TestComputeCameraToWorldRejectsNearDegenerateSpread(t *testing.T) {
+	truth := degenerateTruth()
+	for _, jog := range []float64{0.01, 0.1, 1.0} {
+		pairs := buildJoggedPairs(truth, jog, 1.0, 8, 7)
+		_, _, err := ComputeCameraToWorld(pairs)
+		test.That(t, err, test.ShouldNotBeNil)
+	}
+}
+
+// TestComputeCameraToWorldAcceptsRealisticSpread is the guard on the guard: real
+// calibration data must still be accepted, and must still solve accurately.
+func TestComputeCameraToWorldAcceptsRealisticSpread(t *testing.T) {
+	truth := degenerateTruth()
+	for _, jog := range []float64{10.0, 70.0} {
+		pairs := buildJoggedPairs(truth, jog, 1.0, 8, 7)
+		got, _, err := ComputeCameraToWorld(pairs)
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, got.Point().Sub(truth.Point()).Norm(), test.ShouldBeLessThan, 40.0)
+	}
 }
 
 // rotDet returns the determinant of an orientation's 3x3 rotation matrix
