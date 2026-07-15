@@ -125,6 +125,66 @@ func (pt *teachTracker) captureHandEyePoint(ctx context.Context, raw interface{}
 	}, nil
 }
 
+// captureHandEyeView deprojects the clicked pixel against the cached snapshot and
+// pairs it with the current target and the flange pose frozen at snapshot time.
+func (pt *teachTracker) captureHandEyeView(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.cameraMount != mountEyeInHand {
+		return nil, fmt.Errorf("camera_mount is %q; use capture_handeye_point instead", pt.cameraMount)
+	}
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("capture_handeye_view args must be an object")
+	}
+	uF, ok := args["u"].(float64)
+	if !ok {
+		return nil, errors.New("capture_handeye_view requires a numeric 'u' (pixel column)")
+	}
+	vF, ok := args["v"].(float64)
+	if !ok {
+		return nil, errors.New("capture_handeye_view requires a numeric 'v' (pixel row)")
+	}
+
+	pt.targetMu.Lock()
+	target := pt.currentTarget
+	pt.targetMu.Unlock()
+	if target == nil {
+		return nil, errors.New("no target set; run capture_handeye_target before capturing a view")
+	}
+
+	// Take-and-clear in one critical section: each snapshot yields at most one
+	// observation. Two clicks on one frozen frame would produce identical
+	// observations, which is a degenerate set the solve must reject. Clearing
+	// here rather than after a successful deproject keeps this race-free; a
+	// failed deproject just means the operator re-snapshots.
+	pt.snapshotMu.Lock()
+	snap := pt.lastSnapshot
+	flange := pt.lastFlange
+	pt.lastSnapshot = nil
+	pt.lastFlange = nil
+	pt.snapshotMu.Unlock()
+	if snap == nil {
+		return nil, errors.New("no snapshot cached; run handeye_snapshot before each view")
+	}
+
+	camPt, err := frames.Deproject(snap.Intr, snap.Depth, int(uF), int(vF))
+	if err != nil {
+		return nil, err
+	}
+
+	idx := pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{
+		Target: *target,
+		Flange: flange,
+		Camera: camPt,
+	})
+	return map[string]interface{}{
+		"index":      idx,
+		"buffer_len": pt.store.EyeInHandBufferLen(),
+		"target":     vecToMap(*target),
+		"flange":     poseToMap(flange),
+		"camera":     vecToMap(camPt),
+	}, nil
+}
+
 // vecToMap renders an r3.Vector as a plain xyz map for DoCommand responses.
 func vecToMap(v r3.Vector) map[string]interface{} {
 	return map[string]interface{}{"x": v.X, "y": v.Y, "z": v.Z}

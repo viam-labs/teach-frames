@@ -153,6 +153,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 	case has(cmd, "capture_handeye_target"):
 		return pt.captureHandEyeTarget(ctx)
 
+	case has(cmd, "capture_handeye_view"):
+		return pt.captureHandEyeView(ctx, cmd["capture_handeye_view"])
+
 	case has(cmd, "solve_handeye"):
 		return pt.solveHandEye(ctx)
 	}

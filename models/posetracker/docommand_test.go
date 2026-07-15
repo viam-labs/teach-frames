@@ -1126,6 +1126,76 @@ func TestCaptureHandEyeTargetRejectedInEyeToHand(t *testing.T) {
 	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
 }
 
+// --- capture_handeye_view tests ---
+
+// The snapshot must freeze the flange pose. If the implementation re-reads the
+// flange at click time it gets F2 instead of F1 and this fails -- which is the
+// race we cannot see on hardware.
+func TestCaptureHandEyeViewUsesCachedFlange(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	// SEPARATE fakes: a shared queue would make this assertion meaningless.
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 400})}}
+	f1 := spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+	f2 := spatialmath.NewPoseFromPoint(r3.Vector{X: 22})
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{f1, f2}}
+
+	ctx := context.Background()
+	_, err := pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldBeNil)
+
+	buf := pt.store.EyeInHandBuffer()
+	test.That(t, len(buf), test.ShouldEqual, 1)
+	test.That(t, buf[0].Flange.Point().X, test.ShouldAlmostEqual, 11.0) // F1, not F2
+}
+
+func TestCaptureHandEyeViewRequiresTarget(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 11})}}
+
+	ctx := context.Background()
+	_, err := pt.DoCommand(ctx, map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_target")
+}
+
+// One view per snapshot. Without this an operator can click twice without
+// re-snapshotting, producing two identical observations -- exactly the degenerate
+// set the solver must reject.
+func TestCaptureHandEyeViewConsumesSnapshot(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 400})}}
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 11})}}
+
+	ctx := context.Background()
+	_, _ = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	_, _ = pt.DoCommand(ctx, map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	_, err := pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldBeNil)
+
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 1)
+}
+
+func TestCaptureHandEyeViewRejectedInEyeToHand(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeToHand
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
 // --- solve_handeye tests ---
 
 func TestSolveHandEye(t *testing.T) {
