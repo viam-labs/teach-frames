@@ -1074,16 +1074,25 @@ func TestCaptureHandEyeViewConsumesSnapshot(t *testing.T) {
 	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 1)
 }
 
+// ARM THE FIXTURE FULLY so the mount guard is the only thing left that can
+// reject. A bare `ShouldNotBeNil` with no target set passes with the mount guard
+// deleted entirely -- the "no target set" guard satisfies it instead, reporting
+// coverage the test does not have. Asserting error content is better but still
+// only proves "a different error came back", and breaks noisily if guards are
+// ever reordered. With target + snapshot + flange all present, deleting the
+// mount guard makes the command SUCCEED, which is unambiguous.
 func TestCaptureHandEyeViewRejectedInEyeToHand(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraMount = mountEyeToHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.currentTarget = &r3.Vector{X: 400}
+	pt.lastSnapshot = &posesource.Snapshot{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.lastFlange = spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
 	test.That(t, err, test.ShouldNotBeNil)
-	// Assert on CONTENT, not just non-nil. This fixture sets no target, so the
-	// "no target set" guard would satisfy ShouldNotBeNil on its own and the test
-	// would pass with the mount guard deleted entirely -- reporting coverage it
-	// does not have.
 	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 0) // nothing recorded
 }
 ```
 
