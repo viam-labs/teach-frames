@@ -1,18 +1,25 @@
 package posetracker
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"image"
+	_ "image/jpeg" // register the JPEG decoder for image.DecodeConfig
 	"math"
 	"testing"
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/referenceframe"
+	"go.viam.com/rdk/rimage"
+	"go.viam.com/rdk/rimage/transform"
 	"go.viam.com/rdk/spatialmath"
 	"go.viam.com/rdk/testutils/inject"
 	"go.viam.com/test"
 
 	tfconfig "github.com/viam-labs/teach-frames/config"
+	"github.com/viam-labs/teach-frames/frames"
 	"github.com/viam-labs/teach-frames/persist"
 	"github.com/viam-labs/teach-frames/posesource"
 )
@@ -944,4 +951,208 @@ func TestJogCartesianAllAxes(t *testing.T) {
 			test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
 		})
 	}
+}
+
+func TestHandEyeSnapshot(t *testing.T) {
+	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+	dm := rimage.NewEmptyDepthMap(4, 4)
+	dm.Set(1, 1, rimage.Depth(500))
+	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["width"], test.ShouldEqual, 4)
+	test.That(t, resp["height"], test.ShouldEqual, 4)
+
+	// The returned image must be a valid 4x4 JPEG, not just a non-nil string.
+	encoded, ok := resp["image"].(string)
+	test.That(t, ok, test.ShouldBeTrue)
+	decoded, derr := base64.StdEncoding.DecodeString(encoded)
+	test.That(t, derr, test.ShouldBeNil)
+	cfg, format, cerr := image.DecodeConfig(bytes.NewReader(decoded))
+	test.That(t, cerr, test.ShouldBeNil)
+	test.That(t, format, test.ShouldEqual, "jpeg")
+	test.That(t, cfg.Width, test.ShouldEqual, 4)
+	test.That(t, cfg.Height, test.ShouldEqual, 4)
+
+	// The cache must hold THE snapshot just acquired (identity, not a fresh/empty one).
+	test.That(t, pt.lastSnapshot, test.ShouldNotBeNil)
+	test.That(t, pt.lastSnapshot.Intr, test.ShouldEqual, intr)
+	test.That(t, pt.lastSnapshot.Depth, test.ShouldEqual, dm)
+}
+
+func TestHandEyeSnapshotNoCameraErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestCaptureHandEyePoint(t *testing.T) {
+	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+	dm := rimage.NewEmptyDepthMap(4, 4)
+	dm.Set(3, 1, rimage.Depth(1000))
+	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+	// The Fake PoseSource returns a queued world pose for Capture():
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{
+		spatialmath.NewPoseFromPoint(r3.Vector{X: 10, Y: 20, Z: 30}),
+	}}
+
+	// Must snapshot before capture (populates the cache).
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	resp, err := pt.DoCommand(context.Background(),
+		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 3.0, "v": 1.0}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["index"], test.ShouldEqual, 0)
+	test.That(t, resp["buffer_len"], test.ShouldEqual, 1)
+	world := resp["world"].(map[string]interface{})
+	test.That(t, world["x"], test.ShouldEqual, 10.0)
+	cam := resp["camera"].(map[string]interface{})
+	// x = (3-2)/2 * 1000 = 500
+	test.That(t, cam["x"], test.ShouldEqual, 500.0)
+	// y = (1-2)/2 * 1000 = -500
+	test.That(t, cam["y"], test.ShouldEqual, -500.0)
+	// z = depth = 1000
+	test.That(t, cam["z"], test.ShouldEqual, 1000.0)
+}
+
+func TestCaptureHandEyeNoCameraErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = nil
+	_, err := pt.DoCommand(context.Background(),
+		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestCaptureHandEyeNoSnapshotErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{} // no snapshot taken yet
+	_, err := pt.DoCommand(context.Background(),
+		map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// --- get_handeye_buffer / clear_handeye_buffer tests ---
+
+func TestGetAndClearHandEyeBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.store.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
+
+	got, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	pts := got["points"].([]interface{})
+	test.That(t, len(pts), test.ShouldEqual, 1)
+
+	cleared, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, cleared["cleared"], test.ShouldEqual, 1)
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
+}
+
+// --- solve_handeye tests ---
+
+func TestSolveHandEye(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	// Identity transform: world == camera, so R=I, t=0.
+	pts := []frames.HandEyePair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	}
+	for _, p := range pts {
+		pt.store.AddHandEyePair(p)
+	}
+	pt.cameraName = "cam"
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["committed"], test.ShouldBeTrue)
+	test.That(t, resp["residual_rms"].(float64), test.ShouldBeLessThan, 1e-6)
+	// Buffer cleared on success:
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
+	// Persisted to the camera's frame, parent world:
+	fake := pt.persist.(*persist.Fake)
+	test.That(t, fake.SavedComponent, test.ShouldEqual, "cam")
+	test.That(t, fake.SavedParent, test.ShouldEqual, "world")
+	test.That(t, fake.SavedTranslation, test.ShouldNotBeNil)
+	// The persisted translation must be the SOLVED transform, not just non-nil:
+	// for identity input (world == camera) the translation is ~{0,0,0}. A
+	// transposed-rotation or wrong-pose bug would still be non-nil but wrong.
+	test.That(t, fake.SavedTranslation.X, test.ShouldAlmostEqual, 0.0, 1e-6)
+	test.That(t, fake.SavedTranslation.Y, test.ShouldAlmostEqual, 0.0, 1e-6)
+	test.That(t, fake.SavedTranslation.Z, test.ShouldAlmostEqual, 0.0, 1e-6)
+}
+
+// solveHandEyeIdentityPairs are the identity-transform (world == camera) points
+// reused across solve_handeye tests.
+func solveHandEyeIdentityPairs() []frames.HandEyePair {
+	return []frames.HandEyePair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	}
+}
+
+// TestSolveHandEyePersistsCaptureFrameAsParent guards against silently persisting
+// the camera under "world" when the captured world points are actually expressed
+// in a non-world destination_frame. The Kabsch solve yields camera->destFrame, so
+// the persisted parent (and the response's "parent") must be destFrame.
+func TestSolveHandEyePersistsCaptureFrameAsParent(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "base"})
+	// Confirm the constructor propagated DestinationFrame into destFrame.
+	test.That(t, pt.destFrame, test.ShouldEqual, "base")
+	pt.cameraName = "cam"
+	for _, p := range solveHandEyeIdentityPairs() {
+		pt.store.AddHandEyePair(p)
+	}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["parent"], test.ShouldEqual, "base")
+	test.That(t, pt.persist.(*persist.Fake).SavedParent, test.ShouldEqual, "base")
+}
+
+func TestSolveHandEyePersistErrorPreservesBuffer(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraName = "cam"
+	// The solve will succeed, but the component-frame write fails: this exercises
+	// the clear-after-persist ordering (buffer must survive a persist failure).
+	pt.persist.(*persist.Fake).FrameErr = errors.New("boom")
+
+	// Identity transform: solve succeeds, so we reach the persist step.
+	pts := []frames.HandEyePair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	}
+	for _, p := range pts {
+		pt.store.AddHandEyePair(p)
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	// Buffer preserved because the persist failed after a successful solve:
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 4)
+}
+
+func TestSolveHandEyePersistDisabledErrors(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.persist = nil
+	for i := 0; i < 3; i++ {
+		pt.store.AddHandEyePair(frames.HandEyePair{})
+	}
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	// Buffer preserved on failure:
+	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 3)
 }

@@ -271,3 +271,10 @@ func TestNewPoseTrackerWithArmStoresArm(t *testing.T) {
 	tt := res.(*teachTracker)
 	test.That(t, tt.arm, test.ShouldEqual, injArm)
 }
+
+func TestConfigValidateCameraDependency(t *testing.T) {
+	cfg := &Config{TCPComponent: "gripper", Camera: "cam"}
+	deps, _, err := cfg.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, deps, test.ShouldContain, "cam")
+}

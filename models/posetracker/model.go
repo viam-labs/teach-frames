@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"go.viam.com/rdk/components/arm"
+	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/components/posetracker"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/referenceframe"
@@ -38,6 +39,7 @@ type Config struct {
 	TCPComponent     string               `json:"tcp_component"`
 	DestinationFrame string               `json:"destination_frame"`
 	Arm              string               `json:"arm"`
+	Camera           string               `json:"camera"`
 	Frames           []tfconfig.FrameSpec `json:"frames"`
 }
 
@@ -50,6 +52,9 @@ func (c *Config) Validate(path string) ([]string, []string, error) {
 	deps := []string{c.motionServiceOrDefault()}
 	if c.Arm != "" {
 		deps = append(deps, c.Arm)
+	}
+	if c.Camera != "" {
+		deps = append(deps, c.Camera)
 	}
 	return deps, nil, nil
 }
@@ -78,6 +83,15 @@ type teachTracker struct {
 	arm          arm.Arm
 	tcpComponent string
 	armName      string
+
+	cameraSrc  posesource.CameraSource
+	cameraName string
+
+	// snapshotMu guards lastSnapshot; the cached depth+intrinsics MUST be the
+	// exact frame the operator clicked on, so capture deprojects against this,
+	// not a fresh acquisition.
+	snapshotMu   sync.Mutex
+	lastSnapshot *posesource.Snapshot
 
 	// commitMu serializes all config-persisting mutations (define/delete/clear) so
 	// the get→set→persist→rollback sequence remains atomic w.r.t. concurrent commits
@@ -127,6 +141,17 @@ func newPoseTracker(
 		} else {
 			pt.flange = &posesource.ArmSource{Arm: a}
 			pt.arm = a
+		}
+	}
+
+	pt.cameraName = cfg.Camera
+	if cfg.Camera != "" {
+		cam, cerr := camera.FromDependencies(deps, cfg.Camera)
+		if cerr != nil {
+			// Declared dependency should resolve; warn and leave hand-eye calibration disabled.
+			logger.Warnw("hand-eye calibration disabled: camera dependency not resolvable", "camera", cfg.Camera, "err", cerr)
+		} else {
+			pt.cameraSrc = &posesource.RGBDCamera{Cam: cam}
 		}
 	}
 

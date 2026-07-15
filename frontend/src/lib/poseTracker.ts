@@ -119,3 +119,61 @@ export interface TeachTcpOrientationResponse {
   committed: boolean
   orientation: { o_x: number; o_y: number; o_z: number; theta: number }
 }
+
+// Hand-eye calibration DoCommands (see models/posetracker/handeye.go for the
+// authoritative Go-side shapes).
+
+export const handeyeSnapshot = () => ({ handeye_snapshot: {} })
+export const captureHandeyePoint = (u: number, v: number) => ({ capture_handeye_point: { u, v } })
+export const getHandeyeBuffer = () => ({ get_handeye_buffer: {} })
+export const clearHandeyeBuffer = () => ({ clear_handeye_buffer: {} })
+export const solveHandeye = () => ({ solve_handeye: {} })
+
+// Maps a click at (displayX, displayY) inside an <img> of rendered size
+// (clientW, clientH) to the native source pixel of an image (naturalW, naturalH).
+// The <img> is styled `object-fit: fill` (see HandEyePanel.svelte), so this is a
+// straight ratio with no letterbox offset — if that ever changes to
+// `object-fit: contain`, this helper must add the letterbox offsets to match.
+// Result is clamped to valid pixel indices [0, natural-1].
+export function displayToNativePixel(
+  displayX: number, displayY: number,
+  clientW: number, clientH: number,
+  naturalW: number, naturalH: number,
+): { u: number; v: number } {
+  const u = Math.round((displayX / clientW) * naturalW)
+  const v = Math.round((displayY / clientH) * naturalH)
+  return {
+    u: Math.max(0, Math.min(naturalW - 1, u)),
+    v: Math.max(0, Math.min(naturalH - 1, v)),
+  }
+}
+
+export interface HandEyePair {
+  world: { x: number; y: number; z: number }
+  camera: { x: number; y: number; z: number }
+}
+
+export interface HandEyeSnapshotResponse {
+  image: string
+  width: number
+  height: number
+}
+
+export interface CaptureHandEyeResponse {
+  index: number
+  buffer_len: number
+  world: { x: number; y: number; z: number }
+  camera: { x: number; y: number; z: number }
+}
+
+export interface HandEyeBufferResponse {
+  points: HandEyePair[]
+}
+
+export interface SolveHandEyeResponse {
+  committed: boolean
+  pose: PoseMap
+  residual_rms: number
+  parent: string
+  orientation: { o_x: number; o_y: number; o_z: number; theta: number }
+}
