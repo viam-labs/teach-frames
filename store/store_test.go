@@ -237,3 +237,25 @@ func TestHandEyeBuffer(t *testing.T) {
 	test.That(t, n, test.ShouldEqual, 2)
 	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 0)
 }
+
+func TestEyeInHandBuffer(t *testing.T) {
+	s := New()
+	test.That(t, s.EyeInHandBufferLen(), test.ShouldEqual, 0)
+
+	o := frames.EyeInHandObservation{
+		Target: r3.Vector{X: 1},
+		Flange: spatialmath.NewPoseFromPoint(r3.Vector{Z: 3}),
+		Camera: r3.Vector{Y: 2},
+	}
+	test.That(t, s.AddEyeInHandObservation(o), test.ShouldEqual, 0)
+	test.That(t, s.AddEyeInHandObservation(o), test.ShouldEqual, 1)
+	test.That(t, s.EyeInHandBufferLen(), test.ShouldEqual, 2)
+
+	buf := s.EyeInHandBuffer()
+	test.That(t, len(buf), test.ShouldEqual, 2)
+	buf[0].Target = r3.Vector{X: 99} // copy-on-read: must not affect the store
+	test.That(t, s.EyeInHandBuffer()[0].Target.X, test.ShouldEqual, 1.0)
+
+	test.That(t, s.ClearEyeInHandBuffer(), test.ShouldEqual, 2)
+	test.That(t, s.EyeInHandBufferLen(), test.ShouldEqual, 0)
+}
