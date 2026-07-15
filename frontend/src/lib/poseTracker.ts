@@ -177,3 +177,41 @@ export interface SolveHandEyeResponse {
   parent: string
   orientation: { o_x: number; o_y: number; o_z: number; theta: number }
 }
+
+// Eye-in-hand hand-eye calibration DoCommands. Unlike eye-to-hand, the
+// operator touches ONE target then re-views it from multiple flange poses
+// ("jog, snapshot, click the SAME point"), so this is a separate protocol,
+// not just a mount flag on the eye-to-hand one.
+
+export const captureHandeyeTarget = () => ({ capture_handeye_target: {} })
+export const captureHandeyeView = (u: number, v: number) => ({ capture_handeye_view: { u, v } })
+export const getHandeyeMode = () => ({ get_handeye_mode: {} })
+
+export type CameraMount = 'eye_to_hand' | 'eye_in_hand'
+
+export interface HandEyeModeResponse {
+  camera_mount: CameraMount
+  camera_configured: boolean
+  arm_configured: boolean
+}
+
+export interface CaptureHandEyeTargetResponse {
+  target: { x: number; y: number; z: number }
+}
+
+// `flange` is a full pose, not a vector: the orientation is what the solve
+// depends on.
+export interface EyeInHandObservation {
+  target: { x: number; y: number; z: number }
+  flange: PoseMap
+  camera: { x: number; y: number; z: number }
+}
+
+export interface CaptureHandEyeViewResponse extends EyeInHandObservation {
+  index: number
+  buffer_len: number
+}
+
+export interface EyeInHandBufferResponse {
+  points: EyeInHandObservation[]
+}

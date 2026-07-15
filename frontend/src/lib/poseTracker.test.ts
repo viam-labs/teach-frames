@@ -25,6 +25,9 @@ import {
   clearHandeyeBuffer,
   solveHandeye,
   displayToNativePixel,
+  captureHandeyeTarget,
+  captureHandeyeView,
+  getHandeyeMode,
 } from './poseTracker'
 
 describe('DoCommand payload builders', () => {
@@ -120,6 +123,18 @@ describe('Hand-eye DoCommand payload builders', () => {
 
   it('solveHandeye emits an empty verb map', () => {
     expect(solveHandeye()).toEqual({ solve_handeye: {} })
+  })
+})
+
+describe('eye-in-hand commands', () => {
+  it('builds capture_handeye_target', () => {
+    expect(captureHandeyeTarget()).toEqual({ capture_handeye_target: {} })
+  })
+  it('builds capture_handeye_view with pixel coords', () => {
+    expect(captureHandeyeView(412, 233)).toEqual({ capture_handeye_view: { u: 412, v: 233 } })
+  })
+  it('builds get_handeye_mode', () => {
+    expect(getHandeyeMode()).toEqual({ get_handeye_mode: {} })
   })
 })
 
