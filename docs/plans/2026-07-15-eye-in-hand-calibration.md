@@ -1273,6 +1273,12 @@ func TestSolveHandEyeEyeInHandPersistsArmAsParent(t *testing.T) {
 		})
 	}
 
+	// Set a target so the clearing assertion below is not tautological: without
+	// this, currentTarget is nil from construction and `ShouldBeNil` passes even
+	// with the production clearing deleted.
+	tgt := r3.Vector{X: 99}
+	pt.currentTarget = &tgt
+
 	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, resp["parent"], test.ShouldEqual, "ur5") // NOT "world"
