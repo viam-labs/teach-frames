@@ -5,10 +5,10 @@ go 1.26.4
 require (
 	github.com/golang/geo v0.0.0-20230421003525-6adc56603217
 	github.com/google/uuid v1.6.0
-	go.viam.com/api v0.1.563
-	go.viam.com/rdk v0.131.0
+	go.viam.com/api v0.1.566
+	go.viam.com/rdk v1.0.0
 	go.viam.com/test v1.2.4
-	go.viam.com/utils v0.6.1
+	go.viam.com/utils v0.6.6
 	gonum.org/v1/gonum v0.17.0
 	google.golang.org/protobuf v1.36.11
 )
