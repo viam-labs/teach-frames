@@ -1577,7 +1577,14 @@ Requirements:
 - Step 2 button: "Snapshot" → `handeye_snapshot`, renders the frozen base64 JPEG with `object-fit: fill`.
 - Click on the image → `displayToNativePixel(...)` → `capture_handeye_view(u, v)`. Reuse the helper as-is.
 - **The UI must make "same physical point, new vantage" obvious.** Unlike eye-to-hand, the operator clicks the *same* point from each new view. Label the step accordingly (e.g. "Jog the arm, snapshot, then click the SAME point").
-- After a view is captured, the snapshot is consumed server-side — clear the displayed frame and prompt for a new snapshot rather than leaving a stale image that looks clickable.
+- The snapshot is consumed server-side by **take-and-clear, which happens BEFORE the
+  deproject** — so it is consumed on *failure* too, not only on success. Clear the
+  displayed frame on the error path as well, or an operator who clicks a no-depth
+  pixel (routine: specular surfaces, edges, out-of-range) sees "aim at a surface
+  with valid depth", clicks a better pixel on the frame still visibly on screen,
+  and gets a contradictory "no snapshot cached". The only path returning *before*
+  the take-and-clear is the `no target set` guard, which the UI makes unreachable
+  by disabling Snapshot until a target exists.
 - Buffer table from `get_handeye_buffer` (target / flange / camera).
 - "Solve" disabled below 3 observations; on success show `residual_rms` and `parent`.
 - Surface errors from every mutation, matching `HandEyePanel`'s error handling.
