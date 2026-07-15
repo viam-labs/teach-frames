@@ -1079,6 +1079,11 @@ func TestCaptureHandEyeViewRejectedInEyeToHand(t *testing.T) {
 	pt.cameraMount = mountEyeToHand
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
 	test.That(t, err, test.ShouldNotBeNil)
+	// Assert on CONTENT, not just non-nil. This fixture sets no target, so the
+	// "no target set" guard would satisfy ShouldNotBeNil on its own and the test
+	// would pass with the mount guard deleted entirely -- reporting coverage it
+	// does not have.
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
 }
 ```
 

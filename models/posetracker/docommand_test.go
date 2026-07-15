@@ -1036,6 +1036,9 @@ func TestHandeyeSnapshotEyeInHandErrorsWithoutArm(t *testing.T) {
 
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
+	// Pin the content: a bare not-nil assertion would be satisfied by any unrelated
+	// earlier failure, reporting coverage of the arm check that it does not have.
+	test.That(t, err.Error(), test.ShouldContainSubstring, "arm dependency not configured")
 }
 
 func TestCaptureHandEyePoint(t *testing.T) {
@@ -1189,11 +1192,23 @@ func TestCaptureHandEyeViewConsumesSnapshot(t *testing.T) {
 	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 1)
 }
 
+// The fixture is deliberately COMPLETE -- target, snapshot, and frozen flange all
+// present -- so the mount guard is the only thing left that can reject the view.
+// With a bare fixture this test passes on "no target set" whether or not the guard
+// exists, asserting merely that something failed rather than that the right thing
+// did. Fully armed, deleting the guard makes the command succeed outright.
 func TestCaptureHandEyeViewRejectedInEyeToHand(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraMount = mountEyeToHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.currentTarget = &r3.Vector{X: 400}
+	pt.lastSnapshot = &posesource.Snapshot{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.lastFlange = spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
 	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 0) // nothing recorded
 }
 
 // --- solve_handeye tests ---
