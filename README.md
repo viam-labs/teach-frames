@@ -197,7 +197,7 @@ untaught tool frame — run `teach_tcp_position` (and, if needed,
    recommended** for a well-conditioned solve and a meaningful residual.
 5. Send `{"solve_handeye": {}}` to compute and persist the result.
 
-The solve (`ComputeCameraToWorld`, a closed-form Kabsch/Umeyama fit) requires
+The solve (`ComputeRigidTransform`, a closed-form Kabsch/Umeyama fit) requires
 **at least 3 points and rejects collinear inputs** — points spanning only a
 line leave rotation about that line unconstrained, and the command returns a
 descriptive error with the buffer preserved. Coplanar (but non-collinear)

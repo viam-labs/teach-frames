@@ -1043,7 +1043,7 @@ func TestCaptureHandEyeNoSnapshotErrors(t *testing.T) {
 
 func TestGetAndClearHandEyeBuffer(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
-	pt.store.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
+	pt.store.AddHandEyePair(frames.PointPair{Reference: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
 
 	got, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_buffer": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
@@ -1061,11 +1061,11 @@ func TestGetAndClearHandEyeBuffer(t *testing.T) {
 func TestSolveHandEye(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	// Identity transform: world == camera, so R=I, t=0.
-	pts := []frames.HandEyePair{
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	pts := []frames.PointPair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, Reference: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, Reference: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, Reference: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, Reference: r3.Vector{X: 0, Y: 0, Z: 100}},
 	}
 	for _, p := range pts {
 		pt.store.AddHandEyePair(p)
@@ -1093,12 +1093,12 @@ func TestSolveHandEye(t *testing.T) {
 
 // solveHandEyeIdentityPairs are the identity-transform (world == camera) points
 // reused across solve_handeye tests.
-func solveHandEyeIdentityPairs() []frames.HandEyePair {
-	return []frames.HandEyePair{
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+func solveHandEyeIdentityPairs() []frames.PointPair {
+	return []frames.PointPair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, Reference: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, Reference: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, Reference: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, Reference: r3.Vector{X: 0, Y: 0, Z: 100}},
 	}
 }
 
@@ -1129,11 +1129,11 @@ func TestSolveHandEyePersistErrorPreservesBuffer(t *testing.T) {
 	pt.persist.(*persist.Fake).FrameErr = errors.New("boom")
 
 	// Identity transform: solve succeeds, so we reach the persist step.
-	pts := []frames.HandEyePair{
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	pts := []frames.PointPair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, Reference: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, Reference: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, Reference: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, Reference: r3.Vector{X: 0, Y: 0, Z: 100}},
 	}
 	for _, p := range pts {
 		pt.store.AddHandEyePair(p)
@@ -1149,7 +1149,7 @@ func TestSolveHandEyePersistDisabledErrors(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.persist = nil
 	for i := 0; i < 3; i++ {
-		pt.store.AddHandEyePair(frames.HandEyePair{})
+		pt.store.AddHandEyePair(frames.PointPair{})
 	}
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)

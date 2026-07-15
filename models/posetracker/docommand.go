@@ -143,7 +143,7 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 		buf := pt.store.HandEyeBuffer()
 		pts := make([]interface{}, len(buf))
 		for i, p := range buf {
-			pts[i] = map[string]interface{}{"world": vecToMap(p.World), "camera": vecToMap(p.Camera)}
+			pts[i] = map[string]interface{}{"world": vecToMap(p.Reference), "camera": vecToMap(p.Camera)}
 		}
 		return map[string]interface{}{"points": pts}, nil
 

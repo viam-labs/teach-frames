@@ -77,7 +77,7 @@ func (pt *teachTracker) captureHandEyePoint(ctx context.Context, raw interface{}
 	}
 	worldPt := pif.Pose().Point()
 
-	idx := pt.store.AddHandEyePair(frames.HandEyePair{World: worldPt, Camera: camPt})
+	idx := pt.store.AddHandEyePair(frames.PointPair{Reference: worldPt, Camera: camPt})
 	return map[string]interface{}{
 		"index":      idx,
 		"buffer_len": pt.store.HandEyeBufferLen(),
@@ -104,7 +104,7 @@ func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{
 	}
 
 	buf := pt.store.HandEyeBuffer()
-	pose, residual, err := frames.ComputeCameraToWorld(buf)
+	pose, residual, err := frames.ComputeRigidTransform(buf)
 	if err != nil {
 		return nil, fmt.Errorf("hand-eye solve failed: %w", err)
 	}

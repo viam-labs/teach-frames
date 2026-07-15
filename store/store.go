@@ -17,7 +17,7 @@ type FrameStore struct {
 	frames        map[string]*referenceframe.PoseInFrame
 	buffer        []spatialmath.Pose
 	tcpBuffer     []spatialmath.Pose
-	handeyeBuffer []frames.HandEyePair
+	handeyeBuffer []frames.PointPair
 }
 
 // New returns an initialised, empty FrameStore.
@@ -92,7 +92,7 @@ func (s *FrameStore) ClearTCPBuffer() int {
 }
 
 // AddHandEyePair appends a hand-eye correspondence and returns its zero-based index.
-func (s *FrameStore) AddHandEyePair(p frames.HandEyePair) int {
+func (s *FrameStore) AddHandEyePair(p frames.PointPair) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handeyeBuffer = append(s.handeyeBuffer, p)
@@ -101,10 +101,10 @@ func (s *FrameStore) AddHandEyePair(p frames.HandEyePair) int {
 
 // HandEyeBuffer returns a copy of the current hand-eye buffer.
 // Mutating the returned slice does not affect the store.
-func (s *FrameStore) HandEyeBuffer() []frames.HandEyePair {
+func (s *FrameStore) HandEyeBuffer() []frames.PointPair {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return append([]frames.HandEyePair(nil), s.handeyeBuffer...)
+	return append([]frames.PointPair(nil), s.handeyeBuffer...)
 }
 
 // HandEyeBufferLen returns the number of pairs in the hand-eye buffer.
