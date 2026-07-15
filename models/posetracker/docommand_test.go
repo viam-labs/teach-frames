@@ -1114,11 +1114,62 @@ func TestGetAndClearHandEyeBuffer(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	pts := got["points"].([]interface{})
 	test.That(t, len(pts), test.ShouldEqual, 1)
+	// The wire key stays "world" for eye-to-hand despite the Go field being
+	// renamed to Reference -- the shipped HandEyePanel.svelte reads p.world.x.
+	p := pts[0].(map[string]interface{})
+	test.That(t, p["world"].(map[string]interface{})["x"], test.ShouldAlmostEqual, 1.0)
 
 	cleared, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_handeye_buffer": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, cleared["cleared"], test.ShouldEqual, 1)
 	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
+}
+
+// --- get_handeye_mode tests ---
+
+func TestGetHandEyeMode(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_mode": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["camera_mount"], test.ShouldEqual, mountEyeInHand)
+	test.That(t, resp["camera_configured"], test.ShouldBeTrue)
+}
+
+func TestGetHandEyeBufferEyeInHandShape(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{
+		Target: r3.Vector{X: 1},
+		Flange: spatialmath.NewPoseFromPoint(r3.Vector{Z: 3}),
+		Camera: r3.Vector{Y: 2},
+	})
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	pts := resp["points"].([]interface{})
+	test.That(t, len(pts), test.ShouldEqual, 1)
+	p := pts[0].(map[string]interface{})
+	test.That(t, p["target"], test.ShouldNotBeNil)
+	test.That(t, p["camera"], test.ShouldNotBeNil)
+	// flange is a POSE, not a vector: dropping the orientation would discard
+	// exactly what the solve depends on.
+	test.That(t, p["flange"].(map[string]interface{})["theta"], test.ShouldNotBeNil)
+}
+
+func TestClearHandEyeBufferEyeInHandClearsTarget(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	p := r3.Vector{X: 1}
+	pt.currentTarget = &p
+	pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{Flange: spatialmath.NewZeroPose()})
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["cleared"], test.ShouldEqual, 1)
+	test.That(t, pt.currentTarget, test.ShouldBeNil)
 }
 
 // --- capture_handeye_target tests ---

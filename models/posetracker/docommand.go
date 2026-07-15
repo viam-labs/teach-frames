@@ -139,7 +139,29 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 	case has(cmd, "capture_handeye_point"):
 		return pt.captureHandEyePoint(ctx, cmd["capture_handeye_point"])
 
+	case has(cmd, "get_handeye_mode"):
+		return map[string]interface{}{
+			"camera_mount":      pt.cameraMount,
+			"camera_configured": pt.cameraSrc != nil,
+			"arm_configured":    pt.arm != nil,
+		}, nil
+
 	case has(cmd, "get_handeye_buffer"):
+		// Shape differs by mount. Mount is fixed by config, so a given machine
+		// only ever sees one shape. The eye-to-hand "world" key is retained for
+		// compatibility with the shipped panel despite the Go field rename.
+		if pt.cameraMount == mountEyeInHand {
+			buf := pt.store.EyeInHandBuffer()
+			pts := make([]interface{}, len(buf))
+			for i, o := range buf {
+				pts[i] = map[string]interface{}{
+					"target": vecToMap(o.Target),
+					"flange": poseToMap(o.Flange),
+					"camera": vecToMap(o.Camera),
+				}
+			}
+			return map[string]interface{}{"points": pts}, nil
+		}
 		buf := pt.store.HandEyeBuffer()
 		pts := make([]interface{}, len(buf))
 		for i, p := range buf {
@@ -148,6 +170,14 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 		return map[string]interface{}{"points": pts}, nil
 
 	case has(cmd, "clear_handeye_buffer"):
+		if pt.cameraMount == mountEyeInHand {
+			n := pt.store.ClearEyeInHandBuffer()
+			// Drop the target too: a stale one would silently poison the next session.
+			pt.targetMu.Lock()
+			pt.currentTarget = nil
+			pt.targetMu.Unlock()
+			return map[string]interface{}{"cleared": n}, nil
+		}
 		return map[string]interface{}{"cleared": pt.store.ClearHandEyeBuffer()}, nil
 
 	case has(cmd, "capture_handeye_target"):
