@@ -656,7 +656,7 @@ lastFlange spatialmath.Pose
 
 Add `"github.com/golang/geo/r3"` and `"go.viam.com/rdk/spatialmath"` to imports if absent.
 
-- [ ] **Step 2: Wire the constructor**
+- [ ] **Step 3: Wire the constructor**
 
 After `pt.tcpComponent = cfg.TCPComponent`:
 
@@ -676,7 +676,7 @@ Inside the existing `if cfg.Arm != ""` block, in the `else` branch after `pt.arm
 		}
 ```
 
-- [ ] **Step 3: Write the test that pins the wiring — DO NOT SKIP**
+- [ ] **Step 2: Write the test that pins the wiring — DO NOT SKIP**
 
 This is the only test in the entire plan that exercises the constructor line
 above, and it is the one guard against trap #3. Every later task injects
@@ -720,10 +720,11 @@ func TestNewPoseTrackerEyeInHandBuildsFlangeInDest(t *testing.T) {
 	tt := res.(*teachTracker)
 	test.That(t, tt.flangeInDest, test.ShouldNotBeNil)
 
-	// It MUST be a MotionSource, not an ArmSource: ArmSource wraps
-	// arm.EndPosition, which reports in the arm base frame, while the touched
-	// target arrives in destFrame. Mixing them miscalibrates whenever the arm
-	// base is not at the world origin -- and passes every test when it is.
+	// Assert the concrete type and its wiring. A literal ArmSource substitution
+	// is already impossible here (it implements FlangeSource.CaptureFlange, not
+	// PoseSource.Capture, so it would not compile), but reusing pt.source
+	// (Component = tcp_component) or passing the wrong DestFrame both compile
+	// fine and both miscalibrate silently. Those are what these assertions catch.
 	ms, ok := tt.flangeInDest.(*posesource.MotionSource)
 	test.That(t, ok, test.ShouldBeTrue)
 	test.That(t, ms.Component, test.ShouldEqual, "my-arm")   // the ARM, not tcp_component
@@ -750,10 +751,10 @@ func TestNewPoseTrackerEyeToHandHasNoFlangeInDest(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Run to watch them fail, then pass**
+- [ ] **Step 4: Run to watch it pass**
 
 Run: `go test ./models/posetracker/ -run TestNewPoseTrackerEyeInHand -v`
-Expected before Step 2's wiring: FAIL (`flangeInDest` is nil). After: PASS.
+Expected: PASS. (You watched it fail at the end of Step 2, before wiring.)
 
 Then the full suite: `go build ./... && go test ./... 2>&1 | grep -v "^ok"`
 Expected: no output.
@@ -812,9 +813,23 @@ func testRGB() image.Image {
 }
 ```
 
-Refactor `TestHandEyeSnapshot` to use them. **Leave `TestCaptureHandEyePoint`
-alone** — it clicks (3,1) and asserts against that depth; rewriting it to the
-shared fixture would change what it tests. Run `go test ./models/posetracker/` and
+Refactor `TestHandEyeSnapshot` to use them, but **bind locals and reuse them**:
+
+```go
+intr, dm := testIntr(), testDepth()
+pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: dm, Intr: intr}
+// ...
+test.That(t, pt.lastSnapshot.Intr, test.ShouldEqual, intr) // pointer identity
+```
+
+That test asserts `pt.lastSnapshot.Intr ShouldEqual intr` — **pointer identity**,
+deliberately, to prove the cache holds the snapshot just acquired rather than a
+fresh one. Inlining `testIntr()` into the assertion constructs a *second* pointer
+and fails with a confusing "Both the actual and expected values render equally"
+message.
+
+**Leave `TestCaptureHandEyePoint` alone** — it clicks (3,1) and asserts against
+that depth; rewriting it to the shared fixture would change what it tests. Run `go test ./models/posetracker/` and
 confirm still green before continuing.
 
 - [ ] **Step 2: Write the failing tests**
@@ -1266,7 +1281,7 @@ parent assertion fire instead, the branch is already half-written.
 
 - [ ] **Step 3: Implement**
 
-Add `"go.viam.com/rdk/spatialmath"` to `handeye.go`'s imports — it is not there yet.
+(`handeye.go` already imports `spatialmath` as of Task 7.)
 
 First, add a guard after the existing `cameraName` check. `Validate` enforces this
 in production, but tests set fields directly and a blank parent would persist
@@ -1622,6 +1637,11 @@ tells operators to trust the one number that does not move. The residual is flat
 are 850 mm wrong. Rewrite the sentence so residual is *a* signal that catches
 sloppy touches, not *the* signal that certifies a calibration — and say plainly
 that a low residual does not by itself mean the calibration is good.
+
+Also soften `README.md:320` (walkthrough step 12: "Confirm `committed: true` and a
+low `residual_rms`"). It is milder — a low residual is necessary-but-not-sufficient,
+so it works as a checklist item — but it should not be the only thing the
+walkthrough tells an operator to check.
 
 Leave `README.md:140` (TCP teaching) alone: `ComputePivotTCP` is an
 over-determined least-squares fit where the residual genuinely does measure
