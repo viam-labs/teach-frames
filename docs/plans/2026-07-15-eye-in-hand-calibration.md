@@ -73,9 +73,12 @@ type PointPair struct {
 }
 
 // ComputeRigidTransform solves the rigid transform T such that reference ≈ T·camera
-// (Kabsch/Umeyama, rotation only). Points are in mm; the returned residual is the
-// RMS fit error in mm. Returns an error for too-few, collinear, or degenerate
-// inputs. Coplanar (but non-collinear) inputs are accepted.
+// (Kabsch/Umeyama, rotation only). Returns an error for too-few, collinear, or
+// degenerate inputs. Coplanar (but non-collinear) inputs are accepted.
+//
+// Units: input points are in mm, the returned residual is the RMS fit error in
+// mm, and minSpreadEps is in mm. The type is otherwise unit-agnostic, so this
+// contract lives here or nowhere.
 //
 // Degeneracy is checked on BOTH clouds, not just the camera one. If the reference
 // points collapse to a single point — the operator never moved the arm between
@@ -98,7 +101,14 @@ type PointPair struct {
 pts[i] = map[string]interface{}{"world": vecToMap(p.Reference), "camera": vecToMap(p.Camera)}
 ```
 
-Test files: rename the six `TestComputeCameraToWorld*` function names to `TestComputeRigidTransform*`, and every `HandEyePair{World: ...}` literal to `PointPair{Reference: ...}`.
+Test files: rename **all ten** `TestComputeCameraToWorld*` function names in
+`frames/handeye_test.go` to `TestComputeRigidTransform*`, and every
+`HandEyePair{World: ...}` literal to `PointPair{Reference: ...}`. (The spec says
+six — it predates `ee96cd9`, which added four degeneracy tests on this branch.
+Trust the grep in Step 3, not the count.)
+
+Also update the comment in `frames/handeye.go` that names
+`TestComputeCameraToWorldRoundTrip`.
 
 `README.md`: the one mention of `ComputeCameraToWorld`.
 
@@ -144,7 +154,6 @@ package frames
 
 import (
 	"math"
-	"math/rand"
 	"testing"
 
 	"github.com/golang/geo/r3"
@@ -276,6 +285,17 @@ The round-trip proves the happy path. These pin the properties that are easy to 
 
 **Files:**
 - Modify: `frames/eyeinhand_test.go`
+
+**Add `"math/rand"` to the import block** — this task is the first to use it.
+
+**Why these and not the spec's full list:** the spec also lists coincident camera
+points, near-degenerate δ=0.01/1 mm rejection, δ=10/70 mm acceptance, and bounded
+noisy residual. Those all live in `frames/handeye_test.go` already, on the shared
+core, from `ee96cd9`. `ComputeCameraToFlange` delegates to that core, so
+re-testing them here would duplicate coverage. `RejectsNeverJogged` below is the
+exception: it is worth having at *this* layer because it is the eye-in-hand
+operator's specific mistake, and it proves the delegation actually reaches the
+guard.
 
 - [ ] **Step 1: Write the tests**
 
@@ -656,21 +676,101 @@ Inside the existing `if cfg.Arm != ""` block, in the `else` branch after `pt.arm
 		}
 ```
 
-- [ ] **Step 3: Verify it builds and nothing regressed**
+- [ ] **Step 3: Write the test that pins the wiring — DO NOT SKIP**
 
-Run: `go build ./... && go test ./... 2>&1 | grep -v "^ok"`
+This is the only test in the entire plan that exercises the constructor line
+above, and it is the one guard against trap #3. Every later task injects
+`pt.flangeInDest` directly over the field, so without this test an implementer can
+write `Component: cfg.TCPComponent`, or reuse `pt.flange` (`&posesource.ArmSource{}`
+— i.e. `arm.EndPosition`, in the **arm base frame**), and get a **fully green
+suite** plus a silent miscalibration on any machine whose arm base is not at the
+world origin. That is the exact failure shape of `4afb61e`.
+
+`newForTest` cannot be used: it injects only the motion service
+(`model_test.go:25`), so `arm.FromDependencies` always fails and `flangeInDest`
+stays nil. Follow `TestNewPoseTrackerWithArmBuildsFlange` (`model_test.go:199`),
+which injects a resolvable arm.
+
+In `models/posetracker/model_test.go`:
+
+```go
+func TestNewPoseTrackerEyeInHandBuildsFlangeInDest(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{
+		motionName:          injectmotion.NewMotionService(defaultMotionService),
+		arm.Named("my-arm"): inject.NewArm("my-arm"),
+	}
+
+	conf := resource.Config{
+		Name:  "test-tracker",
+		API:   posetracker.API,
+		Model: Model,
+		ConvertedAttributes: &Config{
+			TCPComponent:     "tool",
+			Arm:              "my-arm",
+			Camera:           "cam",
+			CameraMount:      mountEyeInHand,
+			DestinationFrame: "base",
+		},
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+
+	tt := res.(*teachTracker)
+	test.That(t, tt.flangeInDest, test.ShouldNotBeNil)
+
+	// It MUST be a MotionSource, not an ArmSource: ArmSource wraps
+	// arm.EndPosition, which reports in the arm base frame, while the touched
+	// target arrives in destFrame. Mixing them miscalibrates whenever the arm
+	// base is not at the world origin -- and passes every test when it is.
+	ms, ok := tt.flangeInDest.(*posesource.MotionSource)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, ms.Component, test.ShouldEqual, "my-arm")   // the ARM, not tcp_component
+	test.That(t, ms.DestFrame, test.ShouldEqual, "base")     // same frame as the target
+}
+
+// Eye-to-hand needs no arm and must not build flangeInDest.
+func TestNewPoseTrackerEyeToHandHasNoFlangeInDest(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{
+		motionName:          injectmotion.NewMotionService(defaultMotionService),
+		arm.Named("my-arm"): inject.NewArm("my-arm"),
+	}
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "tool", Arm: "my-arm"},
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, res.(*teachTracker).flangeInDest, test.ShouldBeNil)
+}
+```
+
+- [ ] **Step 4: Run to watch them fail, then pass**
+
+Run: `go test ./models/posetracker/ -run TestNewPoseTrackerEyeInHand -v`
+Expected before Step 2's wiring: FAIL (`flangeInDest` is nil). After: PASS.
+
+Then the full suite: `go build ./... && go test ./... 2>&1 | grep -v "^ok"`
 Expected: no output.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add models/posetracker/model.go
+git add models/posetracker/model.go models/posetracker/model_test.go
 git commit -m "feat(posetracker): wire eye-in-hand tracker state
 
 flangeInDest uses motion.GetPose rather than FlangeSource: EndPosition
 reports in the arm base frame while the target arrives in destFrame, and
 mixing the two miscalibrates on any machine whose arm base is not at the
-world origin."
+world origin -- while passing every test on one where it is. The
+constructor test asserts the concrete MotionSource type and its
+Component/DestFrame, because every other test injects the field directly
+and would not catch the substitution."
 ```
 
 ---
@@ -680,7 +780,47 @@ world origin."
 **Files:**
 - Modify: `models/posetracker/handeye.go`, `models/posetracker/docommand_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Extract the shared camera fixtures FIRST**
+
+`testRGB()`, `testDepth()`, and `testIntr()` do **not** exist yet — this step
+creates them, and Tasks 9, 10, and 12 depend on them.
+
+Two inline fixtures exist today and they **disagree on which pixel carries
+depth**: `TestHandEyeSnapshot` (`docommand_test.go:959`) sets `dm.Set(1, 1, 500)`,
+while `TestCaptureHandEyePoint` (`docommand_test.go:996`) sets `dm.Set(3, 1, 1000)`.
+Every test in this plan clicks `(u=1, v=1)`, so **extract the (1,1) variant**.
+Extracting the other one makes every Task 9 test fail with `no depth at pixel
+(1,1)` — a failure that looks like a logic bug in `captureHandEyeView` and isn't.
+
+Add to `models/posetracker/docommand_test.go`:
+
+```go
+// Shared 4x4 RGBD fixture for hand-eye tests. Depth is set at pixel (1,1) ONLY,
+// so tests must click u=1, v=1; any other pixel deprojects to "no depth".
+func testIntr() *transform.PinholeCameraIntrinsics {
+	return &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+}
+
+func testDepth() *rimage.DepthMap {
+	dm := rimage.NewEmptyDepthMap(4, 4)
+	dm.Set(1, 1, rimage.Depth(500))
+	return dm
+}
+
+func testRGB() image.Image {
+	return image.NewRGBA(image.Rect(0, 0, 4, 4))
+}
+```
+
+Refactor `TestHandEyeSnapshot` to use them. **Leave `TestCaptureHandEyePoint`
+alone** — it clicks (3,1) and asserts against that depth; rewriting it to the
+shared fixture would change what it tests. Run `go test ./models/posetracker/` and
+confirm still green before continuing.
+
+- [ ] **Step 2: Write the failing tests**
+
+Note `models/posetracker/handeye.go` does **not** currently import `spatialmath`;
+the implementation below needs it.
 
 ```go
 // Eye-to-hand requires no arm at all, so the shared snapshot verb must not read
@@ -719,14 +859,12 @@ func TestHandeyeSnapshotEyeInHandErrorsWithoutArm(t *testing.T) {
 }
 ```
 
-**Note:** reuse whatever RGB/depth/intrinsics helpers the existing `handeye_snapshot` tests already use in `docommand_test.go` — do not invent new ones. If they are inline, extract them first.
-
-- [ ] **Step 2: Run to watch fail**
+- [ ] **Step 3: Run to watch fail**
 
 Run: `go test ./models/posetracker/ -run TestHandeyeSnapshot -v`
 Expected: `TestHandeyeSnapshotEyeInHandCachesFlange` fails (`pt.lastFlange` is nil), and the errors-without-arm test fails (no error returned).
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 4: Implement**
 
 In `handeyeSnapshot`, after the JPEG encode and before the cache write:
 
@@ -755,12 +893,12 @@ In `handeyeSnapshot`, after the JPEG encode and before the cache write:
 
 (Replace the existing three-line cache write.)
 
-- [ ] **Step 4: Run to watch pass**
+- [ ] **Step 5: Run to watch pass**
 
 Run: `go test ./models/posetracker/ -v 2>&1 | grep -E "FAIL|ok"`
 Expected: ok.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add models/posetracker/handeye.go models/posetracker/docommand_test.go
@@ -1120,11 +1258,27 @@ func TestSolveHandEyeEyeInHandPersistsArmAsParent(t *testing.T) {
 - [ ] **Step 2: Run to watch fail**
 
 Run: `go test ./models/posetracker/ -run TestSolveHandEyeEyeInHand -v`
-Expected: FAIL — parent is `world`, not `ur5`.
+Expected: FAIL at `test.That(t, err, test.ShouldBeNil)` with `camera calibration
+requires at least 3 points, have 0` — pre-implementation, `solveHandEye` reads the
+**eye-to-hand** buffer, which this test never filled. It does not reach the parent
+assertion until the branch exists. That is the correct failure; if you see the
+parent assertion fire instead, the branch is already half-written.
 
 - [ ] **Step 3: Implement**
 
-Rewrite the solve body between the guards and `commitMu`:
+Add `"go.viam.com/rdk/spatialmath"` to `handeye.go`'s imports — it is not there yet.
+
+First, add a guard after the existing `cameraName` check. `Validate` enforces this
+in production, but tests set fields directly and a blank parent would persist
+`frame {parent: ""}` without complaint:
+
+```go
+	if pt.cameraMount == mountEyeInHand && pt.armName == "" {
+		return nil, errors.New("arm not configured; cannot solve eye-in-hand calibration")
+	}
+```
+
+Then rewrite the solve body between the guards and `commitMu`:
 
 ```go
 	var pose spatialmath.Pose
@@ -1449,6 +1603,29 @@ git add frontend/src/ && git commit -m "feat(frontend): mount EyeInHandPanel, ga
 - [ ] **Step 1: Update the canonical command doc comment**
 
 `docommand.go`'s doc comment is the authoritative command list. Add `capture_handeye_target`, `capture_handeye_view`, and `get_handeye_mode`.
+
+Also fix `solveHandEye`'s own doc comment in `handeye.go` (currently around
+line 94): it hardcodes "parent = pt.destFrame", which is now only true for
+eye-to-hand.
+
+- [ ] **Step 1b: CORRECT the README's residual claim — this is a deletion, not an addition**
+
+`README.md:207` currently reads:
+
+> On success, `solve_handeye` reports `residual_rms` — the RMS fit error in
+> mm — **as the trust signal for calibration quality**; treat a large residual as a
+> sign to re-touch points more carefully or capture a better-spread set.
+
+That is now known to be false, and it is worse than a missing caveat: it actively
+tells operators to trust the one number that does not move. The residual is flat
+(~1.6–1.8 mm) across the entire never-jogged failure range, including cases that
+are 850 mm wrong. Rewrite the sentence so residual is *a* signal that catches
+sloppy touches, not *the* signal that certifies a calibration — and say plainly
+that a low residual does not by itself mean the calibration is good.
+
+Leave `README.md:140` (TCP teaching) alone: `ComputePivotTCP` is an
+over-determined least-squares fit where the residual genuinely does measure
+consistency. The claim is only wrong for hand-eye.
 
 - [ ] **Step 2: Update the README**
 
