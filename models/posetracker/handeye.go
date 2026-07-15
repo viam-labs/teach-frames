@@ -204,9 +204,28 @@ func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{
 	if pt.cameraName == "" {
 		return nil, errors.New("camera dependency not configured; cannot solve hand-eye")
 	}
+	if pt.cameraMount == mountEyeInHand && pt.armName == "" {
+		return nil, errors.New("arm not configured; cannot solve eye-in-hand calibration")
+	}
 
-	buf := pt.store.HandEyeBuffer()
-	pose, residual, err := frames.ComputeRigidTransform(buf)
+	var pose spatialmath.Pose
+	var residual float64
+	var err error
+	var parent string
+
+	if pt.cameraMount == mountEyeInHand {
+		// Observations pair a destFrame target with a destFrame flange pose, so
+		// the solve yields camera->flange. The frame system attaches a child with
+		// parent = <arm> at the arm's kinematic tip (the flange), so that is the
+		// correct parent -- NOT destFrame.
+		pose, residual, err = frames.ComputeCameraToFlange(pt.store.EyeInHandBuffer())
+		parent = pt.armName
+	} else {
+		// Captured points come from pt.source.Capture in pt.destFrame, so the
+		// solve yields camera->destFrame.
+		pose, residual, err = frames.ComputeRigidTransform(pt.store.HandEyeBuffer())
+		parent = pt.destFrame
+	}
 	if err != nil {
 		return nil, fmt.Errorf("hand-eye solve failed: %w", err)
 	}
@@ -222,17 +241,24 @@ func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{
 	// destination_frame is set to something other than the default "world").
 	translation := pose.Point()
 	orientation := pose.Orientation()
-	if perr := pt.persist.SaveComponentFrame(ctx, pt.cameraName, pt.destFrame, &translation, orientation); perr != nil {
+	if perr := pt.persist.SaveComponentFrame(ctx, pt.cameraName, parent, &translation, orientation); perr != nil {
 		return nil, fmt.Errorf("persist failed, camera calibration not committed: %w", perr)
 	}
 
-	pt.store.ClearHandEyeBuffer()
+	if pt.cameraMount == mountEyeInHand {
+		pt.store.ClearEyeInHandBuffer()
+		pt.targetMu.Lock()
+		pt.currentTarget = nil
+		pt.targetMu.Unlock()
+	} else {
+		pt.store.ClearHandEyeBuffer()
+	}
 	ov := orientation.OrientationVectorDegrees()
 	return map[string]interface{}{
 		"committed":    true,
 		"pose":         poseToMap(pose),
 		"residual_rms": residual,
-		"parent":       pt.destFrame,
+		"parent":       parent,
 		"orientation":  map[string]interface{}{"o_x": ov.OX, "o_y": ov.OY, "o_z": ov.OZ, "theta": ov.Theta},
 	}, nil
 }

@@ -1325,3 +1325,60 @@ func TestSolveHandEyePersistDisabledErrors(t *testing.T) {
 	// Buffer preserved on failure:
 	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 3)
 }
+
+// TestSolveHandEyeEyeInHandPersistsArmAsParent is the direct analogue of
+// TestSolveHandEyePersistsCaptureFrameAsParent for eye-in-hand: the persisted
+// parent must be the arm, NOT destFrame. Getting this wrong is the same class of
+// silent-miscalibration bug fixed in 4afb61e for eye-to-hand.
+func TestSolveHandEyeEyeInHandPersistsArmAsParent(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "tcp", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraName = "wrist_cam"
+	pt.armName = "ur5"
+	fp := &persist.Fake{}
+	pt.persist = fp
+
+	// Non-degenerate synthetic observations: reuse the frames package's geometry.
+	truth := spatialmath.NewPose(r3.Vector{X: 30, Y: -20, Z: 50}, &spatialmath.EulerAngles{Roll: math.Pi / 2})
+	xInv := spatialmath.PoseInverse(truth)
+	target := r3.Vector{X: 400, Y: 100, Z: 0}
+	flanges := []spatialmath.Pose{
+		spatialmath.NewPose(r3.Vector{X: 300, Y: 0, Z: 400}, &spatialmath.EulerAngles{Yaw: 0}),
+		spatialmath.NewPose(r3.Vector{X: 350, Y: 80, Z: 420}, &spatialmath.EulerAngles{Yaw: 0.3, Pitch: 0.2}),
+		spatialmath.NewPose(r3.Vector{X: 280, Y: -60, Z: 380}, &spatialmath.EulerAngles{Yaw: -0.4, Roll: 0.25}),
+		spatialmath.NewPose(r3.Vector{X: 320, Y: 40, Z: 450}, &spatialmath.EulerAngles{Pitch: -0.35, Roll: -0.2}),
+	}
+	for _, f := range flanges {
+		q := spatialmath.Compose(spatialmath.PoseInverse(f), spatialmath.NewPoseFromPoint(target)).Point()
+		pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{
+			Target: target,
+			Flange: f,
+			Camera: spatialmath.Compose(xInv, spatialmath.NewPoseFromPoint(q)).Point(),
+		})
+	}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["parent"], test.ShouldEqual, "ur5") // NOT "world"
+	test.That(t, fp.SavedParent, test.ShouldEqual, "ur5")
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 0)
+	test.That(t, pt.currentTarget, test.ShouldBeNil) // cleared on success
+}
+
+// TestSolveHandEyeEyeInHandRequiresArm guards against persisting frame
+// {parent: ""} when armName is blank. Validate enforces this in production, but
+// tests (and any future caller) set fields directly, so solveHandEye must
+// re-check.
+func TestSolveHandEyeEyeInHandRequiresArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "tcp", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraName = "wrist_cam"
+	pt.armName = ""
+	for i := 0; i < 3; i++ {
+		pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{Flange: spatialmath.NewZeroPose()})
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "arm")
+}
