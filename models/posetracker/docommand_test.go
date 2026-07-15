@@ -953,13 +953,26 @@ func TestJogCartesianAllAxes(t *testing.T) {
 	}
 }
 
-func TestHandEyeSnapshot(t *testing.T) {
-	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+// Shared 4x4 RGBD fixture for hand-eye tests. Depth is set at pixel (1,1) ONLY,
+// so tests must click u=1, v=1; any other pixel deprojects to "no depth".
+func testIntr() *transform.PinholeCameraIntrinsics {
+	return &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+}
+
+func testDepth() *rimage.DepthMap {
 	dm := rimage.NewEmptyDepthMap(4, 4)
 	dm.Set(1, 1, rimage.Depth(500))
-	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	return dm
+}
+
+func testRGB() image.Image {
+	return image.NewRGBA(image.Rect(0, 0, 4, 4))
+}
+
+func TestHandEyeSnapshot(t *testing.T) {
+	intr, dm := testIntr(), testDepth()
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
-	pt.cameraSrc = &posesource.FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: dm, Intr: intr}
 
 	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
@@ -986,6 +999,41 @@ func TestHandEyeSnapshot(t *testing.T) {
 func TestHandEyeSnapshotNoCameraErrors(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraSrc = nil
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// Eye-to-hand requires no arm at all, so the shared snapshot verb must not read
+// the flange unconditionally -- that would break every arm-less machine.
+func TestHandeyeSnapshotEyeToHandWorksWithoutArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.cameraMount = mountEyeToHand
+	pt.flangeInDest = nil // no arm configured
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+}
+
+func TestHandeyeSnapshotEyeInHandCachesFlange(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.cameraMount = mountEyeInHand
+	f1 := spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{f1}}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, pt.lastFlange, test.ShouldNotBeNil)
+	test.That(t, pt.lastFlange.Point().X, test.ShouldAlmostEqual, 11.0)
+}
+
+func TestHandeyeSnapshotEyeInHandErrorsWithoutArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.cameraMount = mountEyeInHand
+	pt.flangeInDest = nil
+
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
 }

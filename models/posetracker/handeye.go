@@ -8,6 +8,7 @@ import (
 
 	"github.com/golang/geo/r3"
 	"go.viam.com/rdk/rimage"
+	"go.viam.com/rdk/spatialmath"
 	rutils "go.viam.com/rdk/utils"
 
 	"github.com/viam-labs/teach-frames/frames"
@@ -28,8 +29,25 @@ func (pt *teachTracker) handeyeSnapshot(ctx context.Context) (map[string]interfa
 		return nil, fmt.Errorf("could not encode snapshot: %w", err)
 	}
 
+	// Eye-in-hand only: freeze the flange pose WITH the image. The operator jogs,
+	// snapshots, then clicks; a flange read at click time could describe a pose
+	// the pixels never came from. Eye-to-hand touches and clicks at the same arm
+	// pose and requires no arm at all, so this must stay gated.
+	var flange spatialmath.Pose
+	if pt.cameraMount == mountEyeInHand {
+		if pt.flangeInDest == nil {
+			return nil, errors.New("arm dependency not configured or not resolvable; cannot run eye-in-hand calibration")
+		}
+		pif, ferr := pt.flangeInDest.Capture(ctx)
+		if ferr != nil {
+			return nil, fmt.Errorf("could not read flange pose: %w", ferr)
+		}
+		flange = pif.Pose()
+	}
+
 	pt.snapshotMu.Lock()
 	pt.lastSnapshot = snap
+	pt.lastFlange = flange
 	pt.snapshotMu.Unlock()
 
 	b := snap.RGB.Bounds()
