@@ -9,6 +9,7 @@
   import FramePanel from './panels/FramePanel.svelte'
   import TcpPanel from './panels/TcpPanel.svelte'
   import HandEyePanel from './panels/HandEyePanel.svelte'
+  import EyeInHandPanel from './panels/EyeInHandPanel.svelte'
 
   let machine: MachineIdentity | undefined
   let error: string | undefined
@@ -47,6 +48,9 @@
             </section>
             <section class="panel">
               <HandEyePanel />
+            </section>
+            <section class="panel">
+              <EyeInHandPanel />
             </section>
           </div>
         </main>
