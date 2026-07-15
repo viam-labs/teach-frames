@@ -1074,6 +1074,20 @@ func TestCaptureHandEyePoint(t *testing.T) {
 	test.That(t, cam["z"], test.ShouldEqual, 1000.0)
 }
 
+// The guard must fire before the snapshot-cache check: this test never calls
+// handeye_snapshot, so if the mount guard were deleted the next check reached
+// would be "no snapshot cached" -- a different error that does NOT mention
+// capture_handeye_target, which the substring assertion below would catch.
+func TestCaptureHandEyePointRejectedInEyeInHand(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_target")
+}
+
 func TestCaptureHandEyeNoCameraErrors(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraSrc = nil

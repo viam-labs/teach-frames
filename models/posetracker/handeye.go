@@ -82,6 +82,9 @@ func (pt *teachTracker) captureHandEyeTarget(ctx context.Context) (map[string]in
 // captureHandEyePoint deprojects the clicked pixel against the cached snapshot,
 // reads the current TCP world pose, and stores the (world, camera) pair.
 func (pt *teachTracker) captureHandEyePoint(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.cameraMount != mountEyeToHand {
+		return nil, fmt.Errorf("camera_mount is %q; use capture_handeye_target and capture_handeye_view instead", pt.cameraMount)
+	}
 	if pt.cameraSrc == nil {
 		return nil, errors.New("camera dependency not configured; cannot capture hand-eye point")
 	}
