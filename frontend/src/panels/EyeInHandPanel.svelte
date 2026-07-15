@@ -45,11 +45,15 @@
   }
 
   async function handleSnapshot() {
+    // Reset both BEFORE the attempt, not just on success: these only suppress
+    // the raw error display below, so a sticky one would hide every later,
+    // unrelated snapshot error behind a stale "requires a camera" warning.
+    // Each attempt re-derives them from its own outcome.
+    noCamera = false
+    noArm = false
     try {
       const resp = (await snap.mutateAsync(toCommandArgs(handeyeSnapshot()))) as unknown as HandEyeSnapshotResponse
       snapshot = resp
-      noCamera = false
-      noArm = false
     } catch (err) {
       if (err instanceof Error && /camera dependency not configured/.test(err.message)) noCamera = true
       if (err instanceof Error && /arm dependency not configured/.test(err.message)) noArm = true
@@ -63,13 +67,23 @@
     )
     try {
       await view.mutateAsync(toCommandArgs(captureHandeyeView(u, v)))
-      // The backend consumes the cached snapshot on a successful click, so a
-      // second click on this same image would error. Clear it here rather
-      // than leave a frame on screen that still looks clickable.
-      snapshot = undefined
       await buffer.refetch()
     } catch {
       // Surfaced via view.error.
+    } finally {
+      // The server takes-and-clears its cached snapshot BEFORE deprojecting
+      // (handeye.go), so the frame is spent whether or not the click landed on
+      // valid depth. Clicking a no-depth pixel is routine on a depth camera
+      // (specular surfaces, edges, out of range), and leaving the frame up
+      // would invite the obvious retry on a better pixel -- which the server
+      // answers with a contradictory "no snapshot cached". Clear unconditionally
+      // so the UI matches the server: one snapshot, one attempt.
+      //
+      // The only server path that returns before that clear is "no target set",
+      // which is unreachable here (Snapshot is disabled until a target exists),
+      // and harmless if it ever were: recovering means touching a target, and
+      // handleTouchTarget drops the frame anyway.
+      snapshot = undefined
     }
   }
 
@@ -227,6 +241,19 @@
         </table>
       </div>
     {/if}
+  </section>
+{:else if modeQuery.error}
+  <!-- Without this branch a failed get_handeye_mode leaves `mode` undefined, so
+       both calibration panels gate themselves off and the operator gets no UI
+       and no reason why. Reported here only: HandEyePanel runs the same query,
+       so surfacing it in both would print the identical error twice. -->
+  <section class="handeye-panel">
+    <header class="panel-header">
+      <div class="panel-titles">
+        <h2>Camera Calibration</h2>
+      </div>
+    </header>
+    <p class="error">Could not determine the camera mount, so calibration is unavailable: {modeQuery.error.message}</p>
   </section>
 {/if}
 
