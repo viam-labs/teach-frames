@@ -193,10 +193,13 @@ func vecToMap(v r3.Vector) map[string]interface{} {
 	return map[string]interface{}{"x": v.X, "y": v.Y, "z": v.Z}
 }
 
-// solveHandEye runs the Kabsch camera->destination-frame solve over the buffer,
-// persists the result to the camera component's own frame (parent = pt.destFrame,
-// the frame the captured world points are expressed in), reports the residual,
-// and clears the buffer on success. On any failure the buffer is preserved.
+// solveHandEye runs the Kabsch solve over the mode's buffer -- camera->destFrame
+// for eye-to-hand, camera->flange for eye-in-hand -- and persists the result to
+// the camera component's own frame. The parent differs by mount: pt.destFrame
+// (the frame the captured world points are expressed in) for eye-to-hand, or
+// pt.armName (the frame system attaches a child at the arm's kinematic tip) for
+// eye-in-hand. Reports the residual and clears the buffer (and, for eye-in-hand,
+// the current target) on success. On any failure the buffer is preserved.
 func (pt *teachTracker) solveHandEye(ctx context.Context) (map[string]interface{}, error) {
 	if pt.persist == nil {
 		return nil, errors.New("persistence disabled (missing platform-API env vars); cannot commit camera calibration")
