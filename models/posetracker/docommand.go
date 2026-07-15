@@ -150,6 +150,9 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 	case has(cmd, "clear_handeye_buffer"):
 		return map[string]interface{}{"cleared": pt.store.ClearHandEyeBuffer()}, nil
 
+	case has(cmd, "capture_handeye_target"):
+		return pt.captureHandEyeTarget(ctx)
+
 	case has(cmd, "solve_handeye"):
 		return pt.solveHandEye(ctx)
 	}

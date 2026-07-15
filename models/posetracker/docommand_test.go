@@ -1104,6 +1104,28 @@ func TestGetAndClearHandEyeBuffer(t *testing.T) {
 	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
 }
 
+// --- capture_handeye_target tests ---
+
+func TestCaptureHandEyeTargetSetsTarget(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 7, Y: 8, Z: 9})}}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["target"].(map[string]interface{})["x"], test.ShouldAlmostEqual, 7.0)
+	test.That(t, pt.currentTarget, test.ShouldNotBeNil)
+}
+
+func TestCaptureHandEyeTargetRejectedInEyeToHand(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeToHand
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
+}
+
 // --- solve_handeye tests ---
 
 func TestSolveHandEye(t *testing.T) {

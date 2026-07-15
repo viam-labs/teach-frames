@@ -58,6 +58,27 @@ func (pt *teachTracker) handeyeSnapshot(ctx context.Context) (map[string]interfa
 	}, nil
 }
 
+// captureHandEyeTarget reads the current TCP pose and stores it as the target that
+// subsequent views will be paired against. Eye-in-hand only: the arm cannot touch
+// a point and view it from a distance at the same time, so touching and viewing
+// are separate steps.
+func (pt *teachTracker) captureHandEyeTarget(ctx context.Context) (map[string]interface{}, error) {
+	if pt.cameraMount != mountEyeInHand {
+		return nil, fmt.Errorf("camera_mount is %q; use capture_handeye_point instead", pt.cameraMount)
+	}
+	pif, err := pt.source.Capture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p := pif.Pose().Point()
+
+	pt.targetMu.Lock()
+	pt.currentTarget = &p
+	pt.targetMu.Unlock()
+
+	return map[string]interface{}{"target": vecToMap(p)}, nil
+}
+
 // captureHandEyePoint deprojects the clicked pixel against the cached snapshot,
 // reads the current TCP world pose, and stores the (world, camera) pair.
 func (pt *teachTracker) captureHandEyePoint(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
