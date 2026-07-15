@@ -1127,15 +1127,34 @@ func TestGetAndClearHandEyeBuffer(t *testing.T) {
 
 // --- get_handeye_mode tests ---
 
+// The two *_configured flags are asserted with OPPOSITE values here: camera set,
+// arm absent. Both-true would pass even if arm_configured were a copy-paste of
+// pt.cameraSrc != nil. TestGetHandEyeModeArmConfigured covers the other polarity,
+// which a hardcoded false would otherwise satisfy.
 func TestGetHandEyeMode(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraMount = mountEyeInHand
 	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.arm = nil // newForTest injects no arm
 
 	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_mode": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, resp["camera_mount"], test.ShouldEqual, mountEyeInHand)
 	test.That(t, resp["camera_configured"], test.ShouldBeTrue)
+	test.That(t, resp["arm_configured"], test.ShouldBeFalse)
+}
+
+func TestGetHandEyeModeArmConfigured(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeToHand
+	pt.cameraSrc = nil
+	pt.arm = inject.NewArm("my-arm")
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_mode": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["camera_mount"], test.ShouldEqual, mountEyeToHand)
+	test.That(t, resp["camera_configured"], test.ShouldBeFalse)
+	test.That(t, resp["arm_configured"], test.ShouldBeTrue)
 }
 
 func TestGetHandEyeBufferEyeInHandShape(t *testing.T) {
@@ -1389,6 +1408,12 @@ func TestSolveHandEyeEyeInHandPersistsArmAsParent(t *testing.T) {
 	fp := &persist.Fake{}
 	pt.persist = fp
 
+	// A non-nil target is load-bearing: the "cleared on success" assertion below
+	// is nil-stays-nil (tautological, passing even with the clearing removed)
+	// unless something is actually there to clear.
+	tgt := r3.Vector{X: 99}
+	pt.currentTarget = &tgt
+
 	// Non-degenerate synthetic observations: reuse the frames package's geometry.
 	truth := spatialmath.NewPose(r3.Vector{X: 30, Y: -20, Z: 50}, &spatialmath.EulerAngles{Roll: math.Pi / 2})
 	xInv := spatialmath.PoseInverse(truth)
@@ -1431,5 +1456,5 @@ func TestSolveHandEyeEyeInHandRequiresArm(t *testing.T) {
 
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
-	test.That(t, err.Error(), test.ShouldContainSubstring, "arm")
+	test.That(t, err.Error(), test.ShouldContainSubstring, "arm not configured")
 }
