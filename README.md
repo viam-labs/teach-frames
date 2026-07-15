@@ -292,7 +292,12 @@ eye-in-hand calibration.
    `{"capture_handeye_target": {}}`. This reads the current TCP pose and
    stores its position as the target that every view below must click.
 2. Jog the arm to a new vantage point — anywhere the camera can still see the
-   touched target, without disturbing the target itself.
+   touched target, without disturbing the target itself. **Spread vantages by
+   tens of centimetres, roughly the scale of the working volume, not by a few
+   millimetres.** A small jog is still "a new vantage point" as far as this
+   step is concerned — the solve will accept it and report a clean residual —
+   but it is measurably worse-conditioned and neither `residual_rms` nor the
+   degeneracy guard will catch it (see the conditioning note below).
 3. Send `{"handeye_snapshot": {}}` to freeze the camera's current RGBD view
    *and* the flange pose at that same instant, and get back a base64 JPEG of
    the color image.
@@ -315,16 +320,28 @@ too (an operator who snapshots and clicks repeatedly without actually moving
 the arm produces near-identical observations, which the solve rejects rather
 than silently miscalibrating).
 
-**Recommend varying wrist orientation between vantages, not just position.**
-Pure-translation vantages (jogging position only, never rotating the wrist)
-are **valid input and are not rejected** — the deprojected clicks are full 3D
-points, not bearings, so translation alone still constrains the rotation.
-But translation-only vantages are measurably worse-conditioned than vantages
-that also vary orientation (worst-case rotation error under 1 mm of camera
-noise: 2.42° for pure translation vs. 0.77° when orientation is varied too),
-and — per the residual caveat above — `residual_rms` will not reveal that the
-conditioning was worse. Jog through a mix of positions *and* wrist angles
-when practical.
+**Spread vantages by tens of centimetres, and vary wrist orientation between
+vantages, not just position.** Pure-translation vantages
+(jogging position only, never rotating the wrist) are **valid input and are
+not rejected** — the deprojected clicks are full 3D points, not bearings, so
+translation alone still constrains the rotation. But translation-only
+vantages are measurably worse-conditioned than vantages that also vary
+orientation, and the effect is large enough to matter:
+
+- At a **~70 mm vantage spread**, worst-case rotation error under 1 mm of
+  camera noise measures 2.42° for pure translation vs. 0.77° when orientation
+  is varied too. Those figures hold at that spread — they are *not* a
+  universal bound, and get worse as vantages get closer together.
+- Pure-translation vantages jogged only **5–10 mm apart** — still "a new
+  vantage point" by the letter of step 2 above — have been measured, under
+  the same 1 mm camera noise, producing worst-case *translation* error of
+  **64–118 mm across 60 trials, with none rejected** by the solve or the
+  degeneracy guard. A small jog and a clean residual can still mean the
+  calibration is off by a decimetre.
+
+Per the residual caveat above, `residual_rms` will not reveal any of this —
+it stays small regardless of vantage spread. Jog through a mix of positions
+*and* wrist angles, spread by tens of centimetres, when practical.
 
 **Example — one target, four vantages, then solve:**
 
