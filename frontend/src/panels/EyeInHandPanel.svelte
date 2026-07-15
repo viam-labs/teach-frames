@@ -124,6 +124,7 @@
 </script>
 
 {#if mode === 'eye_in_hand'}
+<section class="panel">
   <section class="handeye-panel">
     <header class="panel-header">
       <div class="panel-titles">
@@ -242,11 +243,13 @@
       </div>
     {/if}
   </section>
+</section>
 {:else if modeQuery.error}
-  <!-- Without this branch a failed get_handeye_mode leaves `mode` undefined, so
-       both calibration panels gate themselves off and the operator gets no UI
-       and no reason why. Reported here only: HandEyePanel runs the same query,
-       so surfacing it in both would print the identical error twice. -->
+<!-- Without this branch a failed get_handeye_mode leaves `mode` undefined, so
+     both calibration panels gate themselves off and the operator gets no UI
+     and no reason why. Reported here only: HandEyePanel runs the same query,
+     so surfacing it in both would print the identical error twice. -->
+<section class="panel">
   <section class="handeye-panel">
     <header class="panel-header">
       <div class="panel-titles">
@@ -255,6 +258,7 @@
     </header>
     <p class="error">Could not determine the camera mount, so calibration is unavailable: {modeQuery.error.message}</p>
   </section>
+</section>
 {/if}
 
 <style>

@@ -82,6 +82,7 @@
 </script>
 
 {#if mode === 'eye_to_hand'}
+<section class="panel">
 <section class="handeye-panel">
   <header class="panel-header">
     <div class="panel-titles">
@@ -161,6 +162,7 @@
       </table>
     </div>
   {/if}
+</section>
 </section>
 {/if}
 
