@@ -1,14 +1,15 @@
 <script lang="ts">
-  // Floating panel that walks an operator through the 3-point frame-define
-  // procedure (P0 origin, P1 +X, P2 +XY-plane), driving the real pose-tracker
-  // DoCommands. Mounted inside <Visualizer>'s `children` snippet (see
-  // App.svelte), alongside <TcpTriad />, which is what makes FloatingPanel's
-  // overlay portal available.
+  // Floating panel that walks an operator through defining a frame by one of
+  // three methods (3-point: P0 origin, P1 +X, P2 +XY-plane; single-point:
+  // origin only; TCP-snapshot: uses the current tool pose as-is), driving the
+  // real pose-tracker DoCommands. Mounted inside <Visualizer>'s `children`
+  // snippet (see App.svelte), alongside <TcpTriad />, which is what makes
+  // FloatingPanel's overlay portal available.
   //
   // Step machine itself lives in `wizard` (created once in App.svelte and
-  // passed down as a prop) so the scene plugin (Task 5) can read/write the
-  // SAME instance and draw the matching spatial story.
-  import { createResourceMutation } from '@viamrobotics/svelte-sdk'
+  // passed down as a prop) so the scene plugin can read/write the SAME
+  // instance and draw the matching spatial story.
+  import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { DashboardPortal, FloatingPanel } from '@viamrobotics/motion-tools'
   import { Icon } from '@viamrobotics/prime-core'
   import DashboardToggle from './DashboardToggle.svelte'
@@ -22,9 +23,12 @@
     capturePoint,
     clearBuffer,
     defineFrame,
+    listFrames,
     toCommandArgs,
     type CaptureResponse,
     type DefineFrameResponse,
+    type FrameMethod,
+    type FramesResponse,
   } from '../lib/poseTracker'
   import type { createFrameDefineWizard } from '../lib/wizard/frameDefine.svelte'
 
@@ -40,11 +44,37 @@
   // machine — closing/reopening the panel shouldn't reset progress.
   let open = $state(true)
   let nameInput = $state('')
+  let methodInput = $state<FrameMethod>('3point')
 
-  const CAPTURE_PROMPTS: Record<number, string> = {
-    1: "Jog the tool to the frame's ORIGIN, then Capture.",
-    2: 'Jog along the intended +X axis, then Capture.',
-    3: 'Jog to a point in the +Y half-plane, then Capture.',
+  const METHOD_LABELS: Record<FrameMethod, string> = {
+    '3point': '3-point',
+    point: 'Single point',
+    tcp_snapshot: 'TCP snapshot',
+  }
+  const METHOD_HINTS: Record<FrameMethod, string> = {
+    '3point': 'origin, +X, and a point in the +XY plane',
+    point: 'one point — origin only, no rotation',
+    tcp_snapshot: 'one point — uses the tool pose as-is',
+  }
+  const METHODS: FrameMethod[] = ['3point', 'point', 'tcp_snapshot']
+
+  // Defining with an existing name overwrites it — surface that before Commit.
+  const framesQuery = createResourceQuery(
+    pt, 'doCommand', () => toCommandArgs(listFrames()), () => ({}),
+  )
+  const existingNames = $derived(
+    Object.keys((framesQuery.data as FramesResponse | undefined)?.frames ?? {}),
+  )
+  const willReplace = $derived(existingNames.includes(nameInput.trim()))
+
+  const CAPTURE_PROMPTS: Record<FrameMethod, string[]> = {
+    '3point': [
+      "Jog the tool to the frame's ORIGIN, then Capture.",
+      'Jog along the intended +X axis, then Capture.',
+      'Jog to a point in the +Y half-plane, then Capture.',
+    ],
+    point: ["Jog the tool to the frame's origin, then Capture."],
+    tcp_snapshot: ['Jog the tool to the exact pose to snapshot, then Capture.'],
   }
 
   function errorMessage(err: unknown): string {
@@ -64,7 +94,7 @@
 
   async function handleStart() {
     await clearServerBuffer()
-    wizard.start(nameInput, '3point')
+    wizard.start(nameInput, methodInput)
   }
 
   async function handleCapture() {
@@ -73,8 +103,8 @@
     // synchronously before the DOM updates. A second concurrent
     // capture_point call would advance the backend buffer without a
     // matching wizard.recordCapture (the phase !== 'capturing' guard drops
-    // it), desyncing the buffer the 3-point define runs against from the
-    // wizard's count.
+    // it), desyncing the buffer the define runs against from the wizard's
+    // count.
     if (capture.isPending) return
     try {
       // Source the captured pose from the capture_point RESPONSE, not the
@@ -103,13 +133,14 @@
   async function handleCommit() {
     try {
       const res = (await define.mutateAsync(
-        toCommandArgs(defineFrame(wizard.name, '3point')),
+        toCommandArgs(defineFrame(wizard.name, wizard.method)),
       )) as unknown as DefineFrameResponse
       if (res?.committed) {
         // define_frame clears the server-side capture buffer on success;
         // let CapturePanel (if mounted) know so it doesn't show stale points.
         bumpCaptureBuffer()
         wizard.committed()
+        void framesQuery.refetch()
       } else {
         wizard.setError('define_frame did not commit')
       }
@@ -164,7 +195,22 @@
             class="border-medium hover:border-gray-6 focus:border-gray-9 text-gray-9 min-h-11 w-full rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
           />
         </label>
-        <p class="text-subtle-2 text-xs">Method: 3-point</p>
+        <fieldset class="flex flex-col gap-1.5">
+          <legend class="text-subtle-1 text-sm">Method</legend>
+          {#each METHODS as m (m)}
+            <label class="text-gray-9 flex items-center gap-2 text-sm">
+              <input type="radio" name="frame-method" value={m} bind:group={methodInput} />
+              <span>{METHOD_LABELS[m]}</span>
+              <span class="text-subtle-2 text-xs">— {METHOD_HINTS[m]}</span>
+            </label>
+          {/each}
+        </fieldset>
+
+        {#if willReplace}
+          <p class="text-subtle-1 text-xs" role="status">
+            A frame named "{nameInput.trim()}" exists — committing will replace it.
+          </p>
+        {/if}
         <button
           type="submit"
           disabled={nameInput.trim() === ''}
@@ -175,7 +221,7 @@
       </form>
     {:else if wizard.phase === 'capturing'}
       <div aria-live="polite">
-        <p class="text-gray-9 text-sm">{CAPTURE_PROMPTS[wizard.captureIndex + 1]}</p>
+        <p class="text-gray-9 text-sm">{CAPTURE_PROMPTS[wizard.method][wizard.captureIndex]}</p>
         <p class="text-subtle-1 text-xs">{wizard.captures.length} / {wizard.requiredCaptures} captured</p>
       </div>
       <button
