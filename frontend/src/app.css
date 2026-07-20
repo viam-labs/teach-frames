@@ -2,3 +2,10 @@
 @config '../tailwind.config.ts';
 
 @import '@viamrobotics/prime-core/prime.css';
+
+/* prime.css sets `*, input, button { font-family: inherit }`, so every prime
+   component inherits the font from <body>. Without an explicit body font the
+   page falls back to the browser default (serif). Match the reference app. */
+body {
+  font-family: system-ui, sans-serif;
+}
