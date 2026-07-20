@@ -29,4 +29,22 @@ describe('poseToSceneTransform', () => {
     const length = Math.sqrt(quaternion.reduce((sum, c) => sum + c * c, 0))
     expect(length).toBeCloseTo(1)
   })
+
+  // Pins the exact OrientationVector convention. o_x:1,o_y:0,o_z:0,theta:90
+  // is chosen specifically because it diverges from the WRONG
+  // `Quaternion.setFromAxisAngle([o_x,o_y,o_z], degToRad(theta))` convention
+  // ([~0.7071, 0, 0, ~0.7071]) — the identity-orientation and
+  // normalized/finite cases above don't discriminate between the two, so
+  // without this case a regression to axis-angle would pass the suite.
+  // Golden value captured empirically from the verified-correct
+  // OrientationVector implementation (see poseTransform.ts), not
+  // hand-derived.
+  it('matches the OrientationVector convention exactly (not axis-angle)', () => {
+    const pose: PoseMap = { x: 0, y: 0, z: 0, o_x: 1, o_y: 0, o_z: 0, theta: 90 }
+    const { quaternion } = poseToSceneTransform(pose)
+    expect(quaternion[0]).toBeCloseTo(0.5)
+    expect(quaternion[1]).toBeCloseTo(0.5)
+    expect(quaternion[2]).toBeCloseTo(0.5)
+    expect(quaternion[3]).toBeCloseTo(0.5)
+  })
 })

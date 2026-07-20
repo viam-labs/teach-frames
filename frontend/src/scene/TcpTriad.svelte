@@ -28,13 +28,20 @@
     () => ({}),
   )
 
-  // An arm-less machine would only ever error on get_arm_state, so once we've
-  // seen an error and have no arm, there's nothing to keep polling for.
-  const paused = $derived(!armState.hasArm && armStateQuery.error !== null)
+  // Mirrors JogPanel's guard exactly: pause only on the specific "no arm
+  // configured" error, not on any error. A transient failure on the very
+  // first poll (before any success has populated data) must NOT wedge
+  // polling off forever — that would leave the triad permanently gone even
+  // though the arm is fine, since usePolling only reruns when queryKey
+  // changes, not on a timer of its own.
+  const NO_ARM_PHRASE = 'arm dependency not configured'
+  const noArmConfigured = $derived(
+    armStateQuery.error !== null && armStateQuery.error.message.includes(NO_ARM_PHRASE),
+  )
 
   usePolling(
     () => armStateQuery.queryKey,
-    () => (paused ? false : 500),
+    () => (noArmConfigured ? false : 500),
   )
 
   $effect(() => {
