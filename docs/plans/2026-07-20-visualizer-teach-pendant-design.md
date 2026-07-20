@@ -76,10 +76,18 @@ Confirmed against `@viamrobotics/motion-tools`:
   `DialConf` in `lib/machine.ts` and already use `ViamProvider` today, keyed by
   `machine.id`. So: `<Visualizer partID={machine.id}>` inside our existing
   provider. No new auth.
-- We **skip** the Visualizer's config-editing seam entirely (`usePartConfig`,
-  `ViamAppProvider`, API-key creds, `localConfigProps`). Our `define_frame`
-  DoCommand persists frames server-side and `world_state_store` surfaces them.
-  We never write config through the Visualizer.
+- We **skip** the Visualizer's config *editing/persistence* — no `ViamAppProvider`,
+  no API-key creds. Our `define_frame` DoCommand persists frames server-side and
+  `world_state_store` surfaces them; we never write config through the Visualizer.
+  **Correction (found during Task 1):** we cannot omit `localConfigProps`
+  outright. Without it, `usePartConfig` takes its *standalone* path, which calls
+  `createAppQuery('getRobotPart')` and crashes without a `ViamAppProvider`
+  (`can't access property 'current', viamClient is undefined`). We must pass a
+  **no-op embedded** `localConfigProps` (`{ current: Struct{components:[]},
+  isDirty:false, setLocalPartConfig(){} }`) to select the host-owned backend.
+  Safe for the live scene: the arm + taught-frame triads come from the robot's
+  `frameSystemConfig` + `world_state_store`; part config only tints frame colors
+  and drives build-mode editing, which we don't use.
 - We **stay off** the Visualizer's `interactionMode` union
   (`navigate|measure|select|gizmo` — a fixed type; a new mode would fork the
   package). We don't need it: capture is *physical* — jog the real TCP to the
