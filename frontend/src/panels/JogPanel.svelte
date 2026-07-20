@@ -199,7 +199,7 @@
 <DashboardPortal>
   <DashboardToggle active={open} label="Jog" onclick={() => (open = !open)}>
     {#snippet children()}
-      <Icon name="gamepad" size="base" />
+      <Icon name="robot-outline" />
     {/snippet}
   </DashboardToggle>
 </DashboardPortal>

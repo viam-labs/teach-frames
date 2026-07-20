@@ -5,11 +5,11 @@
   // so our panel toggles sit visually flush with the native transform/snap/
   // space buttons instead of looking like a foreign, oversized control.
   //
-  // The native button ties its 32px visual footprint to a 16px icon + p-1.5
-  // padding — that recipe is kept verbatim below. `min-h-11`/`min-w-11` widen
-  // the actual hit target for touch without growing the visible chrome
-  // (the label wraps the button so the extra hit area stays inside a single
-  // rounded surface, matching the native active/pressed treatment).
+  // The native button ties its footprint to a default-size icon + p-1.5
+  // padding and no explicit width/height — that recipe is kept verbatim below
+  // so our toggles are pixel-consistent with the native buttons in the same
+  // toolbar row (an earlier min-h-11/min-w-11 hit-target widening made them
+  // visibly larger than their neighbours, which read as foreign).
   import type { Snippet } from 'svelte'
 
   let {
@@ -33,7 +33,7 @@
 >
   <button
     type="button"
-    class="flex min-h-11 min-w-11 items-center justify-center p-1.5"
+    class="p-1.5"
     aria-pressed={active}
     aria-label={label}
     title={label}

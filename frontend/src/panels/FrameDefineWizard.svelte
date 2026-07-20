@@ -132,7 +132,7 @@
 <DashboardPortal>
   <DashboardToggle active={open} label="Define frame" onclick={() => (open = !open)}>
     {#snippet children()}
-      <Icon name="axis-arrow" size="base" />
+      <Icon name="image-filter-center-focus" />
     {/snippet}
   </DashboardToggle>
 </DashboardPortal>
