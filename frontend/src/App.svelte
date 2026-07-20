@@ -8,6 +8,7 @@
   import ResourcePicker from './panels/ResourcePicker.svelte'
   import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
   import TcpTriad from './scene/TcpTriad.svelte'
+  import FrameDefinePlugin from './scene/FrameDefinePlugin.svelte'
 
   let machine: MachineIdentity | undefined
   let error: string | undefined
@@ -63,6 +64,7 @@
         <Visualizer partID={machine.id} {localConfigProps} {componentNameToFragmentInfo}>
           {#snippet children()}
             <TcpTriad />
+            <FrameDefinePlugin {wizard} />
             <FrameDefineWizard {wizard} />
           {/snippet}
         </Visualizer>
