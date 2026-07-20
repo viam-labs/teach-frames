@@ -94,7 +94,7 @@
         type="button"
         onclick={() => (pendingConfirm = { kind: 'clearAll' })}
         disabled={confirmBusy || frameEntries.length === 0}
-        class="border-medium text-gray-9 hover:border-gray-6 min-h-11 rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30 disabled:cursor-not-allowed disabled:text-disabled-dark"
+        class="border-medium text-gray-9 hover:border-gray-6 min-h-11 rounded-md border bg-white px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30 disabled:cursor-not-allowed disabled:text-disabled-dark"
       >
         Clear all
       </button>
@@ -114,7 +114,7 @@
             type="button"
             onclick={runConfirm}
             disabled={confirmBusy}
-            class="border-danger-dark bg-danger-dark min-h-11 rounded-md border px-4 text-sm font-medium text-white focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60"
+            class="border-danger-dark bg-danger-dark min-h-11 rounded-md border px-4 text-sm font-medium text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-danger-dark/40 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {#if confirmBusy}
               {pendingConfirm.kind === 'delete' ? 'Deleting…' : 'Clearing…'}
@@ -127,7 +127,7 @@
             onclick={() => (pendingConfirm = null)}
             disabled={confirmBusy}
             use:focusOnMount
-            class="border-medium text-gray-9 hover:border-gray-6 min-h-11 rounded-md border bg-white px-4 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
+            class="border-medium text-gray-9 hover:border-gray-6 min-h-11 rounded-md border bg-white px-4 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
           >
             Cancel
           </button>
