@@ -25,8 +25,11 @@
 
   const markers = $derived(wizard.captures.map((c: PoseMap) => toScenePosition(c)))
 
+  // Only step 4 (preview & commit) shows the provisional triad — once
+  // committed (step 5) the real world_state_store triad takes over, and
+  // this must stop drawing or the scene would show two triads at once.
   const provisionalBasis = $derived(
-    wizard.captures.length === 3
+    wizard.step === 4 && wizard.captures.length === 3
       ? threePointBasis(wizard.captures[0], wizard.captures[1], wizard.captures[2])
       : null,
   )
@@ -59,12 +62,14 @@
   )
 </script>
 
-{#each markers as position, i (i)}
-  <T.Mesh {position} raycast={() => null} renderOrder={1}>
-    <T.SphereGeometry args={[0.006]} />
-    <T.MeshBasicMaterial color="#3560ee" depthTest={false} />
-  </T.Mesh>
-{/each}
+{#if wizard.step >= 1 && wizard.step <= 4}
+  {#each markers as position, i (i)}
+    <T.Mesh {position} raycast={() => null} renderOrder={1}>
+      <T.SphereGeometry args={[0.006]} />
+      <T.MeshBasicMaterial color="#3560ee" depthTest={false} />
+    </T.Mesh>
+  {/each}
+{/if}
 
 {#if previewLine}
   <T.Mesh raycast={() => null} renderOrder={1}>

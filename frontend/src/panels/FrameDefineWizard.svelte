@@ -14,6 +14,7 @@
   import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
   import { armState } from '../lib/armState.svelte'
+  import { motion } from '../lib/motion.svelte'
   import { bumpCaptureBuffer } from '../lib/captureBuffer.svelte'
   import {
     capturePoint,
@@ -78,6 +79,18 @@
       // buffer, whereas the poll can be up to 500ms stale and could reflect
       // a different pose than what was just captured.
       const res = (await capture.mutateAsync(toCommandArgs(capturePoint()))) as unknown as CaptureResponse
+      // Defend against a desynced backend buffer (e.g. a swallowed
+      // clear_buffer failure left stale points behind): the response's
+      // buffer_len is the backend's authoritative count. If it doesn't match
+      // what the wizard is about to have, define_frame would run against a
+      // buffer that doesn't match the reviewed markers — bail with an error
+      // instead of silently recording a mismatched capture.
+      if (res.buffer_len !== wizard.captures.length + 1) {
+        wizard.setError(
+          `Capture buffer out of sync (server has ${res.buffer_len} points, expected ${wizard.captures.length + 1}). Re-capture to reset.`,
+        )
+        return
+      }
       wizard.recordCapture(res.pose)
     } catch (err) {
       wizard.setError(errorMessage(err))
@@ -157,7 +170,7 @@
       <button
         type="button"
         onclick={handleCapture}
-        disabled={capture.isPending || !armState.hasArm}
+        disabled={capture.isPending || !armState.hasArm || motion.busy > 0}
         class="border-gray-9 bg-gray-9 min-h-11 rounded-md border px-4 text-sm font-medium text-white hover:border-black hover:bg-black active:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:!border-disabled-light disabled:!bg-disabled-light disabled:text-disabled-dark"
       >
         {capture.isPending ? 'Capturing…' : 'Capture'}
