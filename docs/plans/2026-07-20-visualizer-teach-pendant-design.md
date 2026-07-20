@@ -225,7 +225,11 @@ single-point & TCP-snapshot frame methods; eye-to-hand and eye-in-hand wizards;
 TCP teaching; frame-relative jogging and the other roadmap items. Their `lib/`
 DoCommand code already exists and is untouched, so porting each later is "add a
 wizard panel + a scene plugin following the 3-point template." The slice
-deliberately establishes that template once.
+deliberately establishes that template once. Also deferred: parenting our
+scene-root draws under the arm's base frame (for non-origin arm bases); a
+bundle code-splitting / HDR-trim pass; and restyling the still-unmounted legacy
+panels (`TcpPanel`/`HandEyePanel`/`EyeInHandPanel`/`CapturePanel`/`FramePanel`,
+which still reference the removed `tokens.css`) when each is re-homed.
 
 ## Definition of done (prototype)
 
@@ -233,3 +237,48 @@ An operator can open the pendant, see the live arm and existing frames in 3D, jo
 the TCP, capture three points with the scene guiding each, preview the
 provisional frame, commit it, and watch it persist as a real triad — with the
 wizard state machine unit-tested and one end-to-end `verify` pass recorded.
+
+## Slice outcome (implemented 2026-07-20)
+
+Built on branch `redesign/visualizer-teach-pendant`. All six tasks complete;
+`npm run check`/`build`/`test` green (50 unit tests). Every task got a two-stage
+review; a final holistic review covered the cross-task seams. **Go/no-go: GO** —
+the embed renders the live robot and the full jog→capture→commit→persist loop is
+wired.
+
+**What the embed actually took (the plan under-scoped this).** The published
+`@viamrobotics/motion-tools` uses the `"svelte"` export condition — it ships
+*unbundled* source (110 `.svelte` files + `.glsl`/`.hdr` assets), so the app must
+compile it with the Visualizer's own toolchain: **Tailwind v4** (`@tailwindcss/vite`)
++ **`vite-plugin-glsl`** + prime-core theme, plus deps the package under-declares
+(`tweakpane-config`, `three.ez/instanced-mesh`, `tailwind-merge`, `threlte-uikit`).
+Required a **Vite 6→8 / vitest 2→4** bump. Reference config copied from the
+sibling `../visualization` repo. Dev pre-bundling needed
+`optimizeDeps.rolldownOptions.moduleTypes` for `.hdr`→dataurl / `.glsl`→text (the
+package can't be `exclude`d — that severs its transitive CJS interop).
+
+**Connection is cookie-only** (no `ViamAppProvider`): the two — and only two —
+`createAppQuery` seams (`usePartConfig`, `useFragmentInfo`) are routed to their
+embedded backends with a no-op `localConfigProps` + empty
+`componentNameToFragmentInfo`. Frame persistence stays on our `define_frame`
+DoCommand; the arm + taught-frame triads render natively from the robot.
+
+**Bundle:** ~6.7 MB `dist` (main JS ~3.0 MB, ~830 KB gz) + draco/basis wasm + a
+1.6 MB HDR env map. Acceptable for the Application delivery path; a
+code-splitting / HDR-trim pass is a future optimization.
+
+**Pattern established for the deferred methods:** shared rune wizard store
+(`lib/wizard/`) + a FloatingPanel driving DoCommands + a scene plugin reading the
+store. `get_arm_state` is polled by a single owner (`JogPanel`); scene components
+are pure `armState` readers.
+
+**Outstanding hardware-verify items (assumptions this slice rests on, not code):**
+1. **`world_state_store` is the only renderer of a committed frame** once the
+   provisional preview clears — the end-to-end "persists + renders" claim fails
+   silently if `define_frame` doesn't populate `world_state_store`. Top verify
+   item.
+2. **Non-origin arm base:** our triads/markers draw in scene-root while the
+   Visualizer draws the arm through `frameSystemConfig`; they coincide only if the
+   arm base ≈ world origin. If a cell has a non-identity arm base, our draws would
+   diverge — a future improvement is to parent our scene objects under the arm's
+   base frame. Added to the deferred boundary.
