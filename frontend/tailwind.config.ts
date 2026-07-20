@@ -9,7 +9,8 @@ export default {
   content: [
     './index.html',
     './src/**/*.{html,js,svelte,ts}',
-    './node_modules/@viamrobotics/prime-core/**/*.{ts,svelte}',
+    './node_modules/@viamrobotics/prime-core/dist/**/*.{ts,svelte}',
+    './node_modules/@viamrobotics/prime-core/{theme,plugins}.ts',
     './node_modules/@viamrobotics/motion-tools/dist/**/*.{js,svelte,ts}',
   ],
   theme,

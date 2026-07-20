@@ -16,18 +16,19 @@ export default defineConfig(async () => ({
   optimizeDeps: {
     // @viamrobotics/motion-tools ships unbundled source (110 .svelte files plus
     // .glsl shaders and a .hdr env map). vite-plugin-svelte already teaches the
-    // dep optimizer to handle .svelte during pre-bundle; only .glsl/.hdr block
-    // it ("stream did not contain valid UTF-8", glsl parse errors). Teaching the
-    // optimizer those two loaders lets motion-tools pre-bundle fully — which is
-    // essential, because EXCLUDING it instead severs its many transitive
-    // CommonJS deps (classnames, three-perf's nested tweakpane@3, …) from the
-    // CJS->ESM interop that only pre-bundling provides, breaking `import x from`
-    // in the browser. .hdr -> dataurl (the code imports it as a URL string),
-    // .glsl -> text (imported as a raw shader string; these shaders use no
-    // #include, so glsl()'s extra processing isn't needed at pre-bundle time).
-    esbuildOptions: {
-      target: 'esnext',
-      loader: { '.hdr': 'dataurl', '.glsl': 'text' },
+    // dep optimizer (Rolldown, in Vite 8) to handle .svelte during pre-bundle;
+    // only .glsl/.hdr block it ("stream did not contain valid UTF-8", glsl parse
+    // errors). Declaring module types for those two lets motion-tools pre-bundle
+    // fully — which is essential, because EXCLUDING it instead severs its many
+    // transitive CommonJS deps (classnames, three-perf's nested tweakpane@3, …)
+    // from the CJS->ESM interop that only pre-bundling provides, breaking
+    // `import x from` in the browser. .hdr -> dataurl (the code imports it as a
+    // URL string), .glsl -> text (imported as a raw shader string; these shaders
+    // use no #include, so glsl()'s extra processing isn't needed at pre-bundle
+    // time). Uses rolldownOptions.moduleTypes (the native Vite 8 option), not the
+    // deprecated esbuildOptions.loader shim.
+    rolldownOptions: {
+      moduleTypes: { '.hdr': 'dataurl', '.glsl': 'text' },
     },
   },
   build: { outDir: 'dist', emptyOutDir: true, target: 'esnext' },
