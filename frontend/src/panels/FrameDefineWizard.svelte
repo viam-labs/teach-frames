@@ -51,6 +51,10 @@
     point: 'Single point',
     tcp_snapshot: 'TCP snapshot',
   }
+  // Wording here is intentionally teach-flow-specific (describes what each
+  // method's point(s) mean during capture) and deliberately differs from the
+  // count-based hints in the sibling FramePanel.svelte — don't "reconcile"
+  // them, that would degrade the guided copy here.
   const METHOD_HINTS: Record<FrameMethod, string> = {
     '3point': 'origin, +X, and a point in the +XY plane',
     point: 'one point — origin only, no rotation',
@@ -59,6 +63,9 @@
   const METHODS: FrameMethod[] = ['3point', 'point', 'tcp_snapshot']
 
   // Defining with an existing name overwrites it — surface that before Commit.
+  // 4th arg (options) is required — a lone trailing arg is treated as options
+  // and would drop our command args (see FramePanel.svelte for the same
+  // pattern with more detail).
   const framesQuery = createResourceQuery(
     pt, 'doCommand', () => toCommandArgs(listFrames()), () => ({}),
   )
@@ -81,7 +88,7 @@
     return err instanceof Error ? err.message : String(err)
   }
 
-  // Clears any stale server-side capture buffer so exactly our 3 captures
+  // Clears any stale server-side capture buffer so exactly our captures
   // define the frame. Best-effort: a failure here shouldn't block starting —
   // it's surfaced (if it matters) once a real capture/define call fails.
   async function clearServerBuffer() {
