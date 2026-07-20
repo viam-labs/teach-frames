@@ -25,11 +25,11 @@
 
   const markers = $derived(wizard.captures.map((c: PoseMap) => toScenePosition(c)))
 
-  // Only step 4 (preview & commit) shows the provisional triad — once
-  // committed (step 5) the real world_state_store triad takes over, and
-  // this must stop drawing or the scene would show two triads at once.
+  // Only the preview phase shows the provisional triad — once committed,
+  // the real world_state_store triad takes over, and this must stop
+  // drawing or the scene would show two triads at once.
   const provisionalBasis = $derived(
-    wizard.step === 4 && wizard.captures.length === 3
+    wizard.phase === 'preview' && wizard.captures.length === 3
       ? threePointBasis(wizard.captures[0], wizard.captures[1], wizard.captures[2])
       : null,
   )
@@ -47,13 +47,11 @@
       : null,
   )
 
-  // Live preview: while capturing (step 2 or 3, i.e. P0 is already down) and
-  // the arm's live pose is known, draw a thin guide line from the origin to
-  // the live TCP while placing the +X point (step 2) and the in-plane point
-  // (step 3) — it previews whichever of those two vectors is currently being
-  // taught.
+  // Live preview: while capturing and at least P0 is down, draw a thin
+  // guide line from the origin to the live TCP — it previews whichever
+  // axis point is currently being taught.
   const previewLine = $derived(
-    (wizard.step === 2 || wizard.step === 3) && wizard.captures.length >= 1 && armState.pose
+    wizard.phase === 'capturing' && wizard.captures.length >= 1 && armState.pose
       ? [
           new Vector3(...toScenePosition(wizard.captures[0])),
           new Vector3(...toScenePosition(armState.pose)),
@@ -62,7 +60,7 @@
   )
 </script>
 
-{#if wizard.step >= 1 && wizard.step <= 4}
+{#if wizard.phase === 'capturing' || wizard.phase === 'preview'}
   {#each markers as position, i (i)}
     <T.Mesh {position} raycast={() => null} renderOrder={1}>
       <T.SphereGeometry args={[0.006]} />

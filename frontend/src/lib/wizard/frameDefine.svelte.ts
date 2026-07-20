@@ -1,39 +1,47 @@
-import type { PoseMap } from '../poseTracker'
+import type { FrameMethod, PoseMap } from '../poseTracker'
 
-// Steps: 0 name&start · 1 capture P0 · 2 capture P1 · 3 capture P2 ·
-// 4 preview&commit · 5 committed. Pure logic; the panel wires DoCommands and
-// the scene plugin reads `captures`/`step` to draw the spatial story.
-export type WizardStep = 0 | 1 | 2 | 3 | 4 | 5
+// Phases: setup (choose method + name) · capturing (jog + Capture ×N) ·
+// preview (review the provisional triad, then Commit) · committed.
+// Pure logic; the panel wires DoCommands and the scene plugin reads
+// `phase`/`method`/`captures` to draw the matching spatial story.
+export type WizardPhase = 'setup' | 'capturing' | 'preview' | 'committed'
 
 export function createFrameDefineWizard() {
-  let step = $state<WizardStep>(0)
+  let phase = $state<WizardPhase>('setup')
+  let method = $state<FrameMethod>('3point')
   let name = $state('')
   let captures = $state<PoseMap[]>([])
   let error = $state<string | undefined>(undefined)
 
+  const required = () => (method === '3point' ? 3 : 1)
+
   return {
-    get step() { return step },
+    get phase() { return phase },
+    get method() { return method },
     get name() { return name },
     get captures() { return captures },
     get error() { return error },
-    get canCommit() { return captures.length === 3 },
-    get done() { return step === 5 },
+    get requiredCaptures() { return required() },
+    // 0-based index of the point being captured next (also = count captured so far).
+    get captureIndex() { return captures.length },
+    get canCommit() { return captures.length === required() },
+    get done() { return phase === 'committed' },
 
-    start(rawName: string): boolean {
+    start(rawName: string, m: FrameMethod): boolean {
       const trimmed = rawName.trim()
       if (!trimmed) return false
-      name = trimmed; captures = []; error = undefined; step = 1
+      name = trimmed; method = m; captures = []; error = undefined; phase = 'capturing'
       return true
     },
     recordCapture(pose: PoseMap) {
-      if (step < 1 || step > 3) return
+      if (phase !== 'capturing') return
       captures = [...captures, pose]
       error = undefined
-      step = (captures.length === 3 ? 4 : step + 1) as WizardStep
+      if (captures.length >= required()) phase = 'preview'
     },
-    recapture() { captures = []; error = undefined; step = 1 },
+    recapture() { captures = []; error = undefined; phase = 'capturing' },
     setError(message: string) { error = message },
-    committed() { step = 5 },
-    reset() { step = 0; name = ''; captures = []; error = undefined },
+    committed() { phase = 'committed' },
+    reset() { phase = 'setup'; method = '3point'; name = ''; captures = []; error = undefined },
   }
 }

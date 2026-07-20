@@ -64,7 +64,7 @@
 
   async function handleStart() {
     await clearServerBuffer()
-    wizard.start(nameInput)
+    wizard.start(nameInput, '3point')
   }
 
   async function handleCapture() {
@@ -72,8 +72,9 @@
     // paints asynchronously, so a fast double-click can fire this twice
     // synchronously before the DOM updates. A second concurrent
     // capture_point call would advance the backend buffer without a
-    // matching wizard.recordCapture (step>3 guard drops it), desyncing the
-    // buffer the 3-point define runs against from the wizard's count.
+    // matching wizard.recordCapture (the phase !== 'capturing' guard drops
+    // it), desyncing the buffer the 3-point define runs against from the
+    // wizard's count.
     if (capture.isPending) return
     try {
       // Source the captured pose from the capture_point RESPONSE, not the
@@ -145,7 +146,7 @@
   resizable
 >
   <div class="flex h-full flex-col gap-3 overflow-y-auto p-4">
-    {#if wizard.step === 0}
+    {#if wizard.phase === 'setup'}
       <form
         class="flex flex-col gap-3"
         onsubmit={(event) => {
@@ -172,10 +173,10 @@
           Start
         </button>
       </form>
-    {:else if wizard.step >= 1 && wizard.step <= 3}
+    {:else if wizard.phase === 'capturing'}
       <div aria-live="polite">
-        <p class="text-gray-9 text-sm">{CAPTURE_PROMPTS[wizard.step]}</p>
-        <p class="text-subtle-1 text-xs">{wizard.captures.length} / 3 captured</p>
+        <p class="text-gray-9 text-sm">{CAPTURE_PROMPTS[wizard.captureIndex + 1]}</p>
+        <p class="text-subtle-1 text-xs">{wizard.captures.length} / {wizard.requiredCaptures} captured</p>
       </div>
       <button
         type="button"
@@ -185,7 +186,7 @@
       >
         {capture.isPending ? 'Capturing…' : 'Capture'}
       </button>
-    {:else if wizard.step === 4}
+    {:else if wizard.phase === 'preview'}
       <p class="text-gray-9 text-sm">Review the frame, then commit.</p>
       <div class="flex gap-2">
         <button
@@ -205,7 +206,7 @@
           Re-capture
         </button>
       </div>
-    {:else if wizard.step === 5}
+    {:else if wizard.phase === 'committed'}
       <p class="text-gray-9 text-sm">Frame <em>{wizard.name}</em> saved.</p>
       <button
         type="button"
