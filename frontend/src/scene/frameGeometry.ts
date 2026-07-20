@@ -9,18 +9,25 @@ export interface Basis {
   z: [number, number, number]
 }
 
+// Mirrors the backend's exact degeneracy guard (frames/compute.go
+// `collinearEpsilon`): both checks compare a vector NORM (not squared
+// length) against this epsilon, so the preview's "triad shows ⇔ backend
+// accepts" contract holds exactly.
+const COLLINEAR_EPSILON = 1e-9
+
 // Mirrors the Go backend frames.ComputeThreePoint: origin=P0, +X toward P1,
-// +Z = X × (P0→P2), +Y = Z × X. Returns null when the points are collinear
-// (either cross product ~0), matching the backend's degeneracy guard — so the
-// scene shows NO provisional triad for a frame that can't be computed.
+// +Z = X × (P0→P2), +Y = Z × X. Returns null when the points are coincident
+// or collinear (xAxis.Norm() or zAxis.Norm() below collinearEpsilon),
+// matching the backend's degeneracy guard — so the scene shows NO
+// provisional triad for a frame that can't be computed.
 export function threePointBasis(p0: P, p1: P, p2: P): Basis | null {
   const o = new Vector3(p0.x, p0.y, p0.z)
   const x = new Vector3(p1.x, p1.y, p1.z).sub(o)
+  if (x.length() < COLLINEAR_EPSILON) return null
   const toP2 = new Vector3(p2.x, p2.y, p2.z).sub(o)
-  if (x.lengthSq() === 0 || toP2.lengthSq() === 0) return null
   x.normalize()
   const z = new Vector3().crossVectors(x, toP2)
-  if (z.lengthSq() < 1e-9) return null
+  if (z.length() < COLLINEAR_EPSILON) return null
   z.normalize()
   const y = new Vector3().crossVectors(z, x).normalize()
   return { origin: [o.x, o.y, o.z], x: [x.x, x.y, x.z], y: [y.x, y.y, y.z], z: [z.x, z.y, z.z] }

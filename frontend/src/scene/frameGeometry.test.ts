@@ -44,4 +44,23 @@ describe('basisToQuaternion', () => {
     expect(q[2]).toBeCloseTo(0)
     expect(q[3]).toBeCloseTo(1)
   })
+
+  // Non-symmetric basis (a +90° yaw about Z): x=[0,1,0], y=[-1,0,0], z=[0,0,1].
+  // Unlike the identity basis (which equals its own transpose and so can't
+  // distinguish makeBasis(x,y,z) from a transposed/axis-swapped ordering),
+  // this basis has no such symmetry — a transpose bug produces a different
+  // quaternion. Expected value captured empirically from the verified
+  // makeBasis(x,y,z) implementation: [0, 0, 0.70710678..., 0.70710678...].
+  it('maps a non-symmetric (+90deg yaw) basis to the correct quaternion, guarding the makeBasis axis convention', () => {
+    const q = basisToQuaternion({
+      origin: [0, 0, 0],
+      x: [0, 1, 0],
+      y: [-1, 0, 0],
+      z: [0, 0, 1],
+    })
+    expect(q[0]).toBeCloseTo(0)
+    expect(q[1]).toBeCloseTo(0)
+    expect(q[2]).toBeCloseTo(0.7071067811865476)
+    expect(q[3]).toBeCloseTo(0.7071067811865476)
+  })
 })

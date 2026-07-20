@@ -44,9 +44,11 @@
       : null,
   )
 
-  // Live axis preview: while capturing (step 2 or 3, i.e. P0 is already down)
-  // and the arm's live pose is known, draw a thin line from P0 to the current
-  // TCP so the operator sees the axis they're about to lock in.
+  // Live preview: while capturing (step 2 or 3, i.e. P0 is already down) and
+  // the arm's live pose is known, draw a thin guide line from the origin to
+  // the live TCP while placing the +X point (step 2) and the in-plane point
+  // (step 3) — it previews whichever of those two vectors is currently being
+  // taught.
   const previewLine = $derived(
     (wizard.step === 2 || wizard.step === 3) && wizard.captures.length >= 1 && armState.pose
       ? [
@@ -57,7 +59,7 @@
   )
 </script>
 
-{#each markers as position (position.join(','))}
+{#each markers as position, i (i)}
   <T.Mesh {position} raycast={() => null} renderOrder={1}>
     <T.SphereGeometry args={[0.006]} />
     <T.MeshBasicMaterial color="#3560ee" depthTest={false} />
