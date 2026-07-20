@@ -59,5 +59,15 @@
 </script>
 
 {#if transform}
-  <AxesHelper position={transform.position} quaternion={transform.quaternion} length={0.1} />
+  <!-- depthTest={false} draws the triad ON TOP of the arm/gripper mesh it sits
+       inside — otherwise (the AxesHelper default depthTest=true) the tool-tip
+       triad is occluded by the gripper and only a faint sliver shows. A wider
+       linewidth than the 0.1 default makes it read as a clear TCP indicator. -->
+  <AxesHelper
+    position={transform.position}
+    quaternion={transform.quaternion}
+    length={0.12}
+    width={3}
+    depthTest={false}
+  />
 {/if}

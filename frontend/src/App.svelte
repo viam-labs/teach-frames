@@ -33,6 +33,18 @@
     isDirty: false,
     setLocalPartConfig: () => {},
   }
+
+  // Same standalone-vs-embedded split, second (and last) seam: useFragmentInfo.
+  // Clicking a component in the scene makes the Details panel ask whether that
+  // component is fragment-defined, which on the STANDALONE path fires
+  // createAppQuery('getFragment') and hits the same missing-viamClient crash
+  // (and locks the UI in a re-render loop). Passing componentNameToFragmentInfo
+  // — even an empty map — routes it to the EMBEDDED path. Empty is correct here:
+  // we don't drive fragment-variable editing, and no component needs to report
+  // as fragment-defined. These two props (with localConfigProps) are the only
+  // createAppQuery/createAppMutation call sites in the Visualizer, so this
+  // fully closes the app-cloud dependency for our cookie-only Application.
+  const componentNameToFragmentInfo = {}
 </script>
 
 {#if error}
@@ -41,7 +53,7 @@
   <ViamProvider dialConfigs={{ [machine.id]: machine.dialConf }}>
     {#if selectedResource.name}
       <div class="viz-host">
-        <Visualizer partID={machine.id} {localConfigProps}>
+        <Visualizer partID={machine.id} {localConfigProps} {componentNameToFragmentInfo}>
           {#snippet children()}
             <TcpTriad />
           {/snippet}
