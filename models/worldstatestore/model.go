@@ -47,6 +47,14 @@ type mirror struct {
 	logger       logging.Logger
 	pt           posetracker.PoseTracker
 	pollInterval time.Duration
+
+	// workersCtx/cancelWorkers give this resource instance its own lifecycle,
+	// independent of any single gRPC stream's context. mirror is resource.AlwaysRebuild,
+	// so a taught-frame commit reconfigures the machine and RDK builds a NEW mirror,
+	// calling Close on the OLD one; cancelWorkers lets that old instance's poll
+	// goroutine(s) stop instead of continuing to poll a stale PoseTracker forever.
+	workersCtx    context.Context
+	cancelWorkers context.CancelFunc
 }
 
 func newWSS(
@@ -63,11 +71,14 @@ func newWSS(
 	if err != nil {
 		return nil, err
 	}
+	workersCtx, cancelWorkers := context.WithCancel(context.Background())
 	return &mirror{
-		Named:        conf.ResourceName().AsNamed(),
-		logger:       logger,
-		pt:           pt,
-		pollInterval: defaultPollInterval,
+		Named:         conf.ResourceName().AsNamed(),
+		logger:        logger,
+		pt:            pt,
+		pollInterval:  defaultPollInterval,
+		workersCtx:    workersCtx,
+		cancelWorkers: cancelWorkers,
 	}, nil
 }
 
@@ -103,7 +114,7 @@ func (m *mirror) GetTransform(ctx context.Context, id []byte, _ map[string]any) 
 // (without emitting — the client already has the initial set via ListUUIDs/GetTransform),
 // then polls the PoseTracker on m.pollInterval, diffs each snapshot against the last one
 // seen, and emits the resulting changes. The goroutine exits and closes the channel when
-// ctx is done.
+// either the stream's ctx or the resource's workersCtx (see Close) is done.
 func (m *mirror) StreamTransformChanges(ctx context.Context, _ map[string]any) (*worldstatestore.TransformChangeStream, error) {
 	ch := make(chan worldstatestore.TransformChange)
 
@@ -123,6 +134,8 @@ func (m *mirror) StreamTransformChanges(ctx context.Context, _ map[string]any) (
 			select {
 			case <-ctx.Done():
 				return
+			case <-m.workersCtx.Done():
+				return
 			case <-ticker.C:
 				cur, err := m.pt.Poses(ctx, nil, nil)
 				if err != nil {
@@ -134,6 +147,8 @@ func (m *mirror) StreamTransformChanges(ctx context.Context, _ map[string]any) (
 					case ch <- change:
 					case <-ctx.Done():
 						return
+					case <-m.workersCtx.Done():
+						return
 					}
 				}
 				prev = cur
@@ -144,5 +159,12 @@ func (m *mirror) StreamTransformChanges(ctx context.Context, _ map[string]any) (
 	return worldstatestore.NewTransformChangeStreamFromChannel(ctx, ch), nil
 }
 
-// Close is a no-op.
-func (m *mirror) Close(_ context.Context) error { return nil }
+// Close cancels this resource instance's worker goroutines (e.g. the poll loop backing
+// any in-flight StreamTransformChanges streams). This matters because mirror is
+// resource.AlwaysRebuild: committing a taught frame reconfigures the machine and RDK
+// builds a fresh mirror, calling Close on this (now-stale) one. Without this, the old
+// goroutine would keep polling its old PoseTracker instance indefinitely.
+func (m *mirror) Close(_ context.Context) error {
+	m.cancelWorkers()
+	return nil
+}
