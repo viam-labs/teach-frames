@@ -5,13 +5,15 @@
   import { useMachineId } from '../lib/machine'
   import {
     handeyeSnapshot, captureHandeyePoint, getHandeyeBuffer, clearHandeyeBuffer,
-    solveHandeye, displayToNativePixel, toCommandArgs,
+    solveHandeye, getHandeyeMode, displayToNativePixel, toCommandArgs,
     type HandEyeSnapshotResponse, type HandEyeBufferResponse, type SolveHandEyeResponse,
+    type HandEyeModeResponse,
   } from '../lib/poseTracker'
 
   const machineId = useMachineId()
   const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
 
+  const modeQuery = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getHandeyeMode()), () => ({}))
   const buffer = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getHandeyeBuffer()), () => ({}))
   const snap = createResourceMutation(pt, 'doCommand')
   const capture = createResourceMutation(pt, 'doCommand')
@@ -25,6 +27,7 @@
   let imgEl = $state<HTMLImageElement | undefined>(undefined)
 
   const points = $derived((buffer.data as HandEyeBufferResponse | undefined)?.points ?? [])
+  const mode = $derived((modeQuery.data as HandEyeModeResponse | undefined)?.camera_mount)
 
   async function handleRefresh() {
     solveResult = undefined
@@ -78,6 +81,8 @@
   }
 </script>
 
+{#if mode === 'eye_to_hand'}
+<section class="panel">
 <section class="handeye-panel">
   <header class="panel-header">
     <div class="panel-titles">
@@ -158,6 +163,8 @@
     </div>
   {/if}
 </section>
+</section>
+{/if}
 
 <style>
   .handeye-panel { display: flex; flex-direction: column; gap: 1rem; padding: 1rem; }

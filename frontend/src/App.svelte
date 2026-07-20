@@ -9,6 +9,7 @@
   import FramePanel from './panels/FramePanel.svelte'
   import TcpPanel from './panels/TcpPanel.svelte'
   import HandEyePanel from './panels/HandEyePanel.svelte'
+  import EyeInHandPanel from './panels/EyeInHandPanel.svelte'
 
   let machine: MachineIdentity | undefined
   let error: string | undefined
@@ -45,9 +46,8 @@
             <section class="panel">
               <TcpPanel />
             </section>
-            <section class="panel">
-              <HandEyePanel />
-            </section>
+            <HandEyePanel />
+            <EyeInHandPanel />
           </div>
         </main>
       </div>
@@ -227,7 +227,12 @@
     min-width: 0;
   }
 
-  .panel {
+  /* Global (not scoped to App.svelte): HandEyePanel and EyeInHandPanel gate
+     their own visibility on the handeye mode, so each owns its .panel wrapper
+     internally rather than App.svelte wrapping it unconditionally — otherwise
+     the wrapper for the non-matching panel would render as an empty bordered
+     strip. Every other panel is still wrapped by App.svelte below. */
+  :global(.panel) {
     background: var(--surface-panel);
     border: 1px solid var(--border-panel);
     border-radius: var(--radius-xl);

@@ -13,11 +13,12 @@ import (
 
 // FrameStore is the authoritative in-memory state, guarded by a mutex.
 type FrameStore struct {
-	mu            sync.RWMutex
-	frames        map[string]*referenceframe.PoseInFrame
-	buffer        []spatialmath.Pose
-	tcpBuffer     []spatialmath.Pose
-	handeyeBuffer []frames.HandEyePair
+	mu              sync.RWMutex
+	frames          map[string]*referenceframe.PoseInFrame
+	buffer          []spatialmath.Pose
+	tcpBuffer       []spatialmath.Pose
+	handeyeBuffer   []frames.PointPair
+	eyeInHandBuffer []frames.EyeInHandObservation
 }
 
 // New returns an initialised, empty FrameStore.
@@ -92,7 +93,7 @@ func (s *FrameStore) ClearTCPBuffer() int {
 }
 
 // AddHandEyePair appends a hand-eye correspondence and returns its zero-based index.
-func (s *FrameStore) AddHandEyePair(p frames.HandEyePair) int {
+func (s *FrameStore) AddHandEyePair(p frames.PointPair) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handeyeBuffer = append(s.handeyeBuffer, p)
@@ -101,10 +102,10 @@ func (s *FrameStore) AddHandEyePair(p frames.HandEyePair) int {
 
 // HandEyeBuffer returns a copy of the current hand-eye buffer.
 // Mutating the returned slice does not affect the store.
-func (s *FrameStore) HandEyeBuffer() []frames.HandEyePair {
+func (s *FrameStore) HandEyeBuffer() []frames.PointPair {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return append([]frames.HandEyePair(nil), s.handeyeBuffer...)
+	return append([]frames.PointPair(nil), s.handeyeBuffer...)
 }
 
 // HandEyeBufferLen returns the number of pairs in the hand-eye buffer.
@@ -120,6 +121,38 @@ func (s *FrameStore) ClearHandEyeBuffer() int {
 	defer s.mu.Unlock()
 	n := len(s.handeyeBuffer)
 	s.handeyeBuffer = nil
+	return n
+}
+
+// AddEyeInHandObservation appends an eye-in-hand observation and returns its index.
+func (s *FrameStore) AddEyeInHandObservation(o frames.EyeInHandObservation) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eyeInHandBuffer = append(s.eyeInHandBuffer, o)
+	return len(s.eyeInHandBuffer) - 1
+}
+
+// EyeInHandBuffer returns a copy of the current eye-in-hand buffer.
+// Mutating the returned slice does not affect the store.
+func (s *FrameStore) EyeInHandBuffer() []frames.EyeInHandObservation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]frames.EyeInHandObservation(nil), s.eyeInHandBuffer...)
+}
+
+// EyeInHandBufferLen returns the number of observations in the eye-in-hand buffer.
+func (s *FrameStore) EyeInHandBufferLen() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.eyeInHandBuffer)
+}
+
+// ClearEyeInHandBuffer discards all observations and returns the count removed.
+func (s *FrameStore) ClearEyeInHandBuffer() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.eyeInHandBuffer)
+	s.eyeInHandBuffer = nil
 	return n
 }
 

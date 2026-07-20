@@ -33,11 +33,14 @@ import (
 //	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
 //	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
 //	{"jog_cartesian": {"axis": "x", "step": 5}}               — nudge the TCP by a signed step: x/y/z (mm) translate along the world frame, roll/pitch/yaw (degrees) rotate about the tool frame (errors if no arm is configured or the axis is unknown).
-//	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured).
-//	{"capture_handeye_point": {"u": 0, "v": 0}}              — deproject the clicked pixel against the cached snapshot, read the current TCP world pose, and store the (world, camera) pair (errors if no camera is configured, no snapshot is cached, u/v are missing/non-numeric, or the pixel has no valid depth).
-//	{"get_handeye_buffer": {}}                               — return all (world, camera) pairs currently in the hand-eye capture buffer.
-//	{"clear_handeye_buffer": {}}                             — empty the hand-eye capture buffer and return the count removed.
-//	{"solve_handeye": {}}                                     — solve the camera->destination-frame transform over the hand-eye buffer, persist it to the camera component's own frame (parent = the configured destination_frame, default world), report the residual, and clear the buffer (errors if persistence or the camera dependency is not configured; buffer preserved on failure).
+//	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics (and, in eye_in_hand mode, the current flange pose) for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured, or if eye_in_hand mode cannot resolve the arm).
+//	{"capture_handeye_point": {"u": 0, "v": 0}}              — eye_to_hand only: deproject the clicked pixel against the cached snapshot, read the current TCP world pose, and store the (world, camera) pair (errors if no camera is configured, no snapshot is cached, u/v are missing/non-numeric, the pixel has no valid depth, or camera_mount is eye_in_hand).
+//	{"get_handeye_mode": {}}                                 — return the configured camera_mount and whether the camera/arm dependencies resolved, for UI gating.
+//	{"get_handeye_buffer": {}}                               — return the buffered hand-eye observations; shape depends on camera_mount: eye_to_hand yields (world, camera) pairs, eye_in_hand yields (target, flange, camera) triples.
+//	{"clear_handeye_buffer": {}}                             — empty the hand-eye capture buffer (and, in eye_in_hand mode, the current target) and return the count removed.
+//	{"capture_handeye_target": {}}                           — eye_in_hand only: read the current TCP pose and store its point as the target that subsequent capture_handeye_view calls pair against (errors if camera_mount is eye_to_hand).
+//	{"capture_handeye_view": {"u": 0, "v": 0}}               — eye_in_hand only: deproject the clicked pixel against the snapshot cached by the last handeye_snapshot, pair it with the current target and the flange pose frozen at that snapshot, and store the observation (errors if no target is set, no snapshot is cached, u/v are missing/non-numeric, the pixel has no valid depth, or camera_mount is eye_to_hand).
+//	{"solve_handeye": {}}                                     — solve the camera->destination-frame transform (eye_to_hand) or camera->flange transform (eye_in_hand) over the mode's buffer, persist it to the camera component's own frame (parent = the configured destination_frame for eye_to_hand, the configured arm for eye_in_hand), report the residual, and clear the buffer (errors if persistence or the required dependency is not configured; buffer preserved on failure).
 func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{}) (map[string]interface{}, error) {
 	if len(cmd) != 1 {
 		return nil, fmt.Errorf("expected exactly one command key, got %d: %v", len(cmd), keysOf(cmd))
@@ -139,16 +142,52 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 	case has(cmd, "capture_handeye_point"):
 		return pt.captureHandEyePoint(ctx, cmd["capture_handeye_point"])
 
+	case has(cmd, "get_handeye_mode"):
+		return map[string]interface{}{
+			"camera_mount":      pt.cameraMount,
+			"camera_configured": pt.cameraSrc != nil,
+			"arm_configured":    pt.arm != nil,
+		}, nil
+
 	case has(cmd, "get_handeye_buffer"):
+		// Shape differs by mount. Mount is fixed by config, so a given machine
+		// only ever sees one shape. The eye-to-hand "world" key is retained for
+		// compatibility with the shipped panel despite the Go field rename.
+		if pt.cameraMount == mountEyeInHand {
+			buf := pt.store.EyeInHandBuffer()
+			pts := make([]interface{}, len(buf))
+			for i, o := range buf {
+				pts[i] = map[string]interface{}{
+					"target": vecToMap(o.Target),
+					"flange": poseToMap(o.Flange),
+					"camera": vecToMap(o.Camera),
+				}
+			}
+			return map[string]interface{}{"points": pts}, nil
+		}
 		buf := pt.store.HandEyeBuffer()
 		pts := make([]interface{}, len(buf))
 		for i, p := range buf {
-			pts[i] = map[string]interface{}{"world": vecToMap(p.World), "camera": vecToMap(p.Camera)}
+			pts[i] = map[string]interface{}{"world": vecToMap(p.Reference), "camera": vecToMap(p.Camera)}
 		}
 		return map[string]interface{}{"points": pts}, nil
 
 	case has(cmd, "clear_handeye_buffer"):
+		if pt.cameraMount == mountEyeInHand {
+			n := pt.store.ClearEyeInHandBuffer()
+			// Drop the target too: a stale one would silently poison the next session.
+			pt.targetMu.Lock()
+			pt.currentTarget = nil
+			pt.targetMu.Unlock()
+			return map[string]interface{}{"cleared": n}, nil
+		}
 		return map[string]interface{}{"cleared": pt.store.ClearHandEyeBuffer()}, nil
+
+	case has(cmd, "capture_handeye_target"):
+		return pt.captureHandEyeTarget(ctx)
+
+	case has(cmd, "capture_handeye_view"):
+		return pt.captureHandEyeView(ctx, cmd["capture_handeye_view"])
 
 	case has(cmd, "solve_handeye"):
 		return pt.solveHandEye(ctx)

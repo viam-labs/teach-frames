@@ -953,13 +953,26 @@ func TestJogCartesianAllAxes(t *testing.T) {
 	}
 }
 
-func TestHandEyeSnapshot(t *testing.T) {
-	intr := &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+// Shared 4x4 RGBD fixture for hand-eye tests. Depth is set at pixel (1,1) ONLY,
+// so tests must click u=1, v=1; any other pixel deprojects to "no depth".
+func testIntr() *transform.PinholeCameraIntrinsics {
+	return &transform.PinholeCameraIntrinsics{Width: 4, Height: 4, Fx: 2, Fy: 2, Ppx: 2, Ppy: 2}
+}
+
+func testDepth() *rimage.DepthMap {
 	dm := rimage.NewEmptyDepthMap(4, 4)
 	dm.Set(1, 1, rimage.Depth(500))
-	rgb := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	return dm
+}
+
+func testRGB() image.Image {
+	return image.NewRGBA(image.Rect(0, 0, 4, 4))
+}
+
+func TestHandEyeSnapshot(t *testing.T) {
+	intr, dm := testIntr(), testDepth()
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
-	pt.cameraSrc = &posesource.FakeCamera{RGB: rgb, Depth: dm, Intr: intr}
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: dm, Intr: intr}
 
 	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
@@ -988,6 +1001,44 @@ func TestHandEyeSnapshotNoCameraErrors(t *testing.T) {
 	pt.cameraSrc = nil
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// Eye-to-hand requires no arm at all, so the shared snapshot verb must not read
+// the flange unconditionally -- that would break every arm-less machine.
+func TestHandeyeSnapshotEyeToHandWorksWithoutArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.cameraMount = mountEyeToHand
+	pt.flangeInDest = nil // no arm configured
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+}
+
+func TestHandeyeSnapshotEyeInHandCachesFlange(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.cameraMount = mountEyeInHand
+	f1 := spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{f1}}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, pt.lastFlange, test.ShouldNotBeNil)
+	test.That(t, pt.lastFlange.Point().X, test.ShouldAlmostEqual, 11.0)
+}
+
+func TestHandeyeSnapshotEyeInHandErrorsWithoutArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.cameraMount = mountEyeInHand
+	pt.flangeInDest = nil
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	// Pin the content: a bare not-nil assertion would be satisfied by any unrelated
+	// earlier failure, reporting coverage of the arm check that it does not have.
+	test.That(t, err.Error(), test.ShouldContainSubstring, "arm dependency not configured")
 }
 
 func TestCaptureHandEyePoint(t *testing.T) {
@@ -1023,6 +1074,20 @@ func TestCaptureHandEyePoint(t *testing.T) {
 	test.That(t, cam["z"], test.ShouldEqual, 1000.0)
 }
 
+// The guard must fire before the snapshot-cache check: this test never calls
+// handeye_snapshot, so if the mount guard were deleted the next check reached
+// would be "no snapshot cached" -- a different error that does NOT mention
+// capture_handeye_target, which the substring assertion below would catch.
+func TestCaptureHandEyePointRejectedInEyeInHand(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_point": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_target")
+}
+
 func TestCaptureHandEyeNoCameraErrors(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.cameraSrc = nil
@@ -1043,12 +1108,16 @@ func TestCaptureHandEyeNoSnapshotErrors(t *testing.T) {
 
 func TestGetAndClearHandEyeBuffer(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
-	pt.store.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
+	pt.store.AddHandEyePair(frames.PointPair{Reference: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
 
 	got, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_buffer": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
 	pts := got["points"].([]interface{})
 	test.That(t, len(pts), test.ShouldEqual, 1)
+	// The wire key stays "world" for eye-to-hand despite the Go field being
+	// renamed to Reference -- the shipped HandEyePanel.svelte reads p.world.x.
+	p := pts[0].(map[string]interface{})
+	test.That(t, p["world"].(map[string]interface{})["x"], test.ShouldAlmostEqual, 1.0)
 
 	cleared, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_handeye_buffer": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
@@ -1056,16 +1125,186 @@ func TestGetAndClearHandEyeBuffer(t *testing.T) {
 	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 0)
 }
 
+// --- get_handeye_mode tests ---
+
+// The two *_configured flags are asserted with OPPOSITE values here: camera set,
+// arm absent. Both-true would pass even if arm_configured were a copy-paste of
+// pt.cameraSrc != nil. TestGetHandEyeModeArmConfigured covers the other polarity,
+// which a hardcoded false would otherwise satisfy.
+func TestGetHandEyeMode(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.arm = nil // newForTest injects no arm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_mode": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["camera_mount"], test.ShouldEqual, mountEyeInHand)
+	test.That(t, resp["camera_configured"], test.ShouldBeTrue)
+	test.That(t, resp["arm_configured"], test.ShouldBeFalse)
+}
+
+func TestGetHandEyeModeArmConfigured(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeToHand
+	pt.cameraSrc = nil
+	pt.arm = inject.NewArm("my-arm")
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_mode": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["camera_mount"], test.ShouldEqual, mountEyeToHand)
+	test.That(t, resp["camera_configured"], test.ShouldBeFalse)
+	test.That(t, resp["arm_configured"], test.ShouldBeTrue)
+}
+
+func TestGetHandEyeBufferEyeInHandShape(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{
+		Target: r3.Vector{X: 1},
+		Flange: spatialmath.NewPoseFromPoint(r3.Vector{Z: 3}),
+		Camera: r3.Vector{Y: 2},
+	})
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	pts := resp["points"].([]interface{})
+	test.That(t, len(pts), test.ShouldEqual, 1)
+	p := pts[0].(map[string]interface{})
+	test.That(t, p["target"], test.ShouldNotBeNil)
+	test.That(t, p["camera"], test.ShouldNotBeNil)
+	// flange is a POSE, not a vector: dropping the orientation would discard
+	// exactly what the solve depends on.
+	test.That(t, p["flange"].(map[string]interface{})["theta"], test.ShouldNotBeNil)
+}
+
+func TestClearHandEyeBufferEyeInHandClearsTarget(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	p := r3.Vector{X: 1}
+	pt.currentTarget = &p
+	pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{Flange: spatialmath.NewZeroPose()})
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"clear_handeye_buffer": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["cleared"], test.ShouldEqual, 1)
+	test.That(t, pt.currentTarget, test.ShouldBeNil)
+}
+
+// --- capture_handeye_target tests ---
+
+func TestCaptureHandEyeTargetSetsTarget(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 7, Y: 8, Z: 9})}}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["target"].(map[string]interface{})["x"], test.ShouldAlmostEqual, 7.0)
+	test.That(t, pt.currentTarget, test.ShouldNotBeNil)
+}
+
+func TestCaptureHandEyeTargetRejectedInEyeToHand(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeToHand
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
+}
+
+// --- capture_handeye_view tests ---
+
+// The snapshot must freeze the flange pose. If the implementation re-reads the
+// flange at click time it gets F2 instead of F1 and this fails -- which is the
+// race we cannot see on hardware.
+func TestCaptureHandEyeViewUsesCachedFlange(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	// SEPARATE fakes: a shared queue would make this assertion meaningless.
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 400})}}
+	f1 := spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+	f2 := spatialmath.NewPoseFromPoint(r3.Vector{X: 22})
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{f1, f2}}
+
+	ctx := context.Background()
+	_, err := pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldBeNil)
+
+	buf := pt.store.EyeInHandBuffer()
+	test.That(t, len(buf), test.ShouldEqual, 1)
+	test.That(t, buf[0].Flange.Point().X, test.ShouldAlmostEqual, 11.0) // F1, not F2
+}
+
+func TestCaptureHandEyeViewRequiresTarget(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 11})}}
+
+	ctx := context.Background()
+	_, err := pt.DoCommand(ctx, map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_target")
+}
+
+// One view per snapshot. Without this an operator can click twice without
+// re-snapshotting, producing two identical observations -- exactly the degenerate
+// set the solver must reject.
+func TestCaptureHandEyeViewConsumesSnapshot(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 400})}}
+	pt.flangeInDest = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewPoseFromPoint(r3.Vector{X: 11})}}
+
+	ctx := context.Background()
+	_, _ = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_target": map[string]interface{}{}})
+	_, _ = pt.DoCommand(ctx, map[string]interface{}{"handeye_snapshot": map[string]interface{}{}})
+	_, err := pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldBeNil)
+
+	_, err = pt.DoCommand(ctx, map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 1)
+}
+
+// The fixture is deliberately COMPLETE -- target, snapshot, and frozen flange all
+// present -- so the mount guard is the only thing left that can reject the view.
+// With a bare fixture this test passes on "no target set" whether or not the guard
+// exists, asserting merely that something failed rather than that the right thing
+// did. Fully armed, deleting the guard makes the command succeed outright.
+func TestCaptureHandEyeViewRejectedInEyeToHand(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeToHand
+	pt.cameraSrc = &posesource.FakeCamera{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.currentTarget = &r3.Vector{X: 400}
+	pt.lastSnapshot = &posesource.Snapshot{RGB: testRGB(), Depth: testDepth(), Intr: testIntr()}
+	pt.lastFlange = spatialmath.NewPoseFromPoint(r3.Vector{X: 11})
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"capture_handeye_view": map[string]interface{}{"u": 1.0, "v": 1.0}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "capture_handeye_point")
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 0) // nothing recorded
+}
+
 // --- solve_handeye tests ---
 
 func TestSolveHandEye(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	// Identity transform: world == camera, so R=I, t=0.
-	pts := []frames.HandEyePair{
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	pts := []frames.PointPair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, Reference: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, Reference: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, Reference: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, Reference: r3.Vector{X: 0, Y: 0, Z: 100}},
 	}
 	for _, p := range pts {
 		pt.store.AddHandEyePair(p)
@@ -1093,12 +1332,12 @@ func TestSolveHandEye(t *testing.T) {
 
 // solveHandEyeIdentityPairs are the identity-transform (world == camera) points
 // reused across solve_handeye tests.
-func solveHandEyeIdentityPairs() []frames.HandEyePair {
-	return []frames.HandEyePair{
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+func solveHandEyeIdentityPairs() []frames.PointPair {
+	return []frames.PointPair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, Reference: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, Reference: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, Reference: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, Reference: r3.Vector{X: 0, Y: 0, Z: 100}},
 	}
 }
 
@@ -1129,11 +1368,11 @@ func TestSolveHandEyePersistErrorPreservesBuffer(t *testing.T) {
 	pt.persist.(*persist.Fake).FrameErr = errors.New("boom")
 
 	// Identity transform: solve succeeds, so we reach the persist step.
-	pts := []frames.HandEyePair{
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, World: r3.Vector{X: 0, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, World: r3.Vector{X: 100, Y: 0, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, World: r3.Vector{X: 0, Y: 100, Z: 0}},
-		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, World: r3.Vector{X: 0, Y: 0, Z: 100}},
+	pts := []frames.PointPair{
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 0}, Reference: r3.Vector{X: 0, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 100, Y: 0, Z: 0}, Reference: r3.Vector{X: 100, Y: 0, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 100, Z: 0}, Reference: r3.Vector{X: 0, Y: 100, Z: 0}},
+		{Camera: r3.Vector{X: 0, Y: 0, Z: 100}, Reference: r3.Vector{X: 0, Y: 0, Z: 100}},
 	}
 	for _, p := range pts {
 		pt.store.AddHandEyePair(p)
@@ -1149,10 +1388,73 @@ func TestSolveHandEyePersistDisabledErrors(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm", DestinationFrame: "world"})
 	pt.persist = nil
 	for i := 0; i < 3; i++ {
-		pt.store.AddHandEyePair(frames.HandEyePair{})
+		pt.store.AddHandEyePair(frames.PointPair{})
 	}
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
 	test.That(t, err, test.ShouldNotBeNil)
 	// Buffer preserved on failure:
 	test.That(t, pt.store.HandEyeBufferLen(), test.ShouldEqual, 3)
+}
+
+// TestSolveHandEyeEyeInHandPersistsArmAsParent is the direct analogue of
+// TestSolveHandEyePersistsCaptureFrameAsParent for eye-in-hand: the persisted
+// parent must be the arm, NOT destFrame. Getting this wrong is the same class of
+// silent-miscalibration bug fixed in 4afb61e for eye-to-hand.
+func TestSolveHandEyeEyeInHandPersistsArmAsParent(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "tcp", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraName = "wrist_cam"
+	pt.armName = "ur5"
+	fp := &persist.Fake{}
+	pt.persist = fp
+
+	// A non-nil target is load-bearing: the "cleared on success" assertion below
+	// is nil-stays-nil (tautological, passing even with the clearing removed)
+	// unless something is actually there to clear.
+	tgt := r3.Vector{X: 99}
+	pt.currentTarget = &tgt
+
+	// Non-degenerate synthetic observations: reuse the frames package's geometry.
+	truth := spatialmath.NewPose(r3.Vector{X: 30, Y: -20, Z: 50}, &spatialmath.EulerAngles{Roll: math.Pi / 2})
+	xInv := spatialmath.PoseInverse(truth)
+	target := r3.Vector{X: 400, Y: 100, Z: 0}
+	flanges := []spatialmath.Pose{
+		spatialmath.NewPose(r3.Vector{X: 300, Y: 0, Z: 400}, &spatialmath.EulerAngles{Yaw: 0}),
+		spatialmath.NewPose(r3.Vector{X: 350, Y: 80, Z: 420}, &spatialmath.EulerAngles{Yaw: 0.3, Pitch: 0.2}),
+		spatialmath.NewPose(r3.Vector{X: 280, Y: -60, Z: 380}, &spatialmath.EulerAngles{Yaw: -0.4, Roll: 0.25}),
+		spatialmath.NewPose(r3.Vector{X: 320, Y: 40, Z: 450}, &spatialmath.EulerAngles{Pitch: -0.35, Roll: -0.2}),
+	}
+	for _, f := range flanges {
+		q := spatialmath.Compose(spatialmath.PoseInverse(f), spatialmath.NewPoseFromPoint(target)).Point()
+		pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{
+			Target: target,
+			Flange: f,
+			Camera: spatialmath.Compose(xInv, spatialmath.NewPoseFromPoint(q)).Point(),
+		})
+	}
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, resp["parent"], test.ShouldEqual, "ur5") // NOT "world"
+	test.That(t, fp.SavedParent, test.ShouldEqual, "ur5")
+	test.That(t, pt.store.EyeInHandBufferLen(), test.ShouldEqual, 0)
+	test.That(t, pt.currentTarget, test.ShouldBeNil) // cleared on success
+}
+
+// TestSolveHandEyeEyeInHandRequiresArm guards against persisting frame
+// {parent: ""} when armName is blank. Validate enforces this in production, but
+// tests (and any future caller) set fields directly, so solveHandEye must
+// re-check.
+func TestSolveHandEyeEyeInHandRequiresArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "tcp", DestinationFrame: "world"})
+	pt.cameraMount = mountEyeInHand
+	pt.cameraName = "wrist_cam"
+	pt.armName = ""
+	for i := 0; i < 3; i++ {
+		pt.store.AddEyeInHandObservation(frames.EyeInHandObservation{Flange: spatialmath.NewZeroPose()})
+	}
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"solve_handeye": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, err.Error(), test.ShouldContainSubstring, "arm not configured")
 }

@@ -215,9 +215,9 @@ func TestHandEyeBuffer(t *testing.T) {
 	s := New()
 	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 0)
 
-	i0 := s.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
+	i0 := s.AddHandEyePair(frames.PointPair{Reference: r3.Vector{X: 1}, Camera: r3.Vector{Z: 2}})
 	test.That(t, i0, test.ShouldEqual, 0)
-	i1 := s.AddHandEyePair(frames.HandEyePair{World: r3.Vector{X: 3}, Camera: r3.Vector{Z: 4}})
+	i1 := s.AddHandEyePair(frames.PointPair{Reference: r3.Vector{X: 3}, Camera: r3.Vector{Z: 4}})
 	test.That(t, i1, test.ShouldEqual, 1)
 	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 2)
 
@@ -227,13 +227,35 @@ func TestHandEyeBuffer(t *testing.T) {
 
 	buf := s.HandEyeBuffer()
 	test.That(t, len(buf), test.ShouldEqual, 2)
-	test.That(t, buf[0].World.X, test.ShouldEqual, 1)
+	test.That(t, buf[0].Reference.X, test.ShouldEqual, 1)
 
 	// Copy semantics: mutating the returned slice must not affect the store.
-	buf[0].World.X = 999
-	test.That(t, s.HandEyeBuffer()[0].World.X, test.ShouldEqual, 1)
+	buf[0].Reference.X = 999
+	test.That(t, s.HandEyeBuffer()[0].Reference.X, test.ShouldEqual, 1)
 
 	n := s.ClearHandEyeBuffer()
 	test.That(t, n, test.ShouldEqual, 2)
 	test.That(t, s.HandEyeBufferLen(), test.ShouldEqual, 0)
+}
+
+func TestEyeInHandBuffer(t *testing.T) {
+	s := New()
+	test.That(t, s.EyeInHandBufferLen(), test.ShouldEqual, 0)
+
+	o := frames.EyeInHandObservation{
+		Target: r3.Vector{X: 1},
+		Flange: spatialmath.NewPoseFromPoint(r3.Vector{Z: 3}),
+		Camera: r3.Vector{Y: 2},
+	}
+	test.That(t, s.AddEyeInHandObservation(o), test.ShouldEqual, 0)
+	test.That(t, s.AddEyeInHandObservation(o), test.ShouldEqual, 1)
+	test.That(t, s.EyeInHandBufferLen(), test.ShouldEqual, 2)
+
+	buf := s.EyeInHandBuffer()
+	test.That(t, len(buf), test.ShouldEqual, 2)
+	buf[0].Target = r3.Vector{X: 99} // copy-on-read: must not affect the store
+	test.That(t, s.EyeInHandBuffer()[0].Target.X, test.ShouldEqual, 1.0)
+
+	test.That(t, s.ClearEyeInHandBuffer(), test.ShouldEqual, 2)
+	test.That(t, s.EyeInHandBufferLen(), test.ShouldEqual, 0)
 }

@@ -278,3 +278,115 @@ func TestConfigValidateCameraDependency(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 	test.That(t, deps, test.ShouldContain, "cam")
 }
+
+func TestValidateCameraMountDefaultsToEyeToHand(t *testing.T) {
+	c := &Config{TCPComponent: "arm"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, c.cameraMountOrDefault(), test.ShouldEqual, mountEyeToHand)
+}
+
+func TestValidateRejectsUnknownCameraMount(t *testing.T) {
+	c := &Config{TCPComponent: "arm", CameraMount: "eye_on_stalk"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestValidateEyeInHandRequiresArm(t *testing.T) {
+	c := &Config{TCPComponent: "arm", CameraMount: mountEyeInHand, Camera: "cam"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestValidateEyeInHandRequiresCamera(t *testing.T) {
+	c := &Config{TCPComponent: "arm", CameraMount: mountEyeInHand, Arm: "ur5"}
+	_, _, err := c.Validate("")
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestValidateEyeInHandAccepted(t *testing.T) {
+	c := &Config{TCPComponent: "tcp", CameraMount: mountEyeInHand, Arm: "ur5", Camera: "cam"}
+	deps, _, err := c.Validate("")
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, deps, test.ShouldContain, "ur5")
+	test.That(t, deps, test.ShouldContain, "cam")
+}
+
+func TestNewPoseTrackerEyeInHandBuildsFlangeInDest(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{
+		motionName:          injectmotion.NewMotionService(defaultMotionService),
+		arm.Named("my-arm"): inject.NewArm("my-arm"),
+	}
+
+	conf := resource.Config{
+		Name:  "test-tracker",
+		API:   posetracker.API,
+		Model: Model,
+		ConvertedAttributes: &Config{
+			TCPComponent:     "tool",
+			Arm:              "my-arm",
+			Camera:           "cam",
+			CameraMount:      mountEyeInHand,
+			DestinationFrame: "base",
+		},
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+
+	tt := res.(*teachTracker)
+	test.That(t, tt.flangeInDest, test.ShouldNotBeNil)
+
+	// Assert the concrete type and its wiring. A literal ArmSource substitution
+	// is already impossible here (it implements FlangeSource.CaptureFlange, not
+	// PoseSource.Capture, so it would not compile), but reusing pt.source
+	// (Component = tcp_component) or passing the wrong DestFrame both compile
+	// fine and both miscalibrate silently. Those are what these assertions catch.
+	ms, ok := tt.flangeInDest.(*posesource.MotionSource)
+	test.That(t, ok, test.ShouldBeTrue)
+	test.That(t, ms.Component, test.ShouldEqual, "my-arm") // the ARM, not tcp_component
+	test.That(t, ms.DestFrame, test.ShouldEqual, "base")   // same frame as the target
+}
+
+// The gate is on the arm RESOLVING, not on cfg.Arm being set. MotionSource holds
+// only a name string, so it would be non-nil even for an arm that does not exist
+// -- turning a clear "arm not configured" error into an opaque GetPose failure at
+// snapshot time.
+func TestNewPoseTrackerEyeInHandUnresolvableArmLeavesFlangeInDestNil(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{
+		motionName: injectmotion.NewMotionService(defaultMotionService),
+		// arm deliberately not injected so arm.FromDependencies fails
+	}
+	conf := resource.Config{
+		Name:  "test-tracker",
+		API:   posetracker.API,
+		Model: Model,
+		ConvertedAttributes: &Config{
+			TCPComponent: "tool", Arm: "my-arm", Camera: "cam", CameraMount: mountEyeInHand,
+		},
+	}
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, res.(*teachTracker).flangeInDest, test.ShouldBeNil)
+}
+
+// Eye-to-hand needs no arm and must not build flangeInDest.
+func TestNewPoseTrackerEyeToHandHasNoFlangeInDest(t *testing.T) {
+	motionName := motion.Named(defaultMotionService)
+	deps := resource.Dependencies{
+		motionName:          injectmotion.NewMotionService(defaultMotionService),
+		arm.Named("my-arm"): inject.NewArm("my-arm"),
+	}
+	conf := resource.Config{
+		Name:                "test-tracker",
+		API:                 posetracker.API,
+		Model:               Model,
+		ConvertedAttributes: &Config{TCPComponent: "tool", Arm: "my-arm"},
+	}
+
+	res, err := newPoseTracker(context.Background(), deps, conf, logging.NewTestLogger(t))
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, res.(*teachTracker).flangeInDest, test.ShouldBeNil)
+}
