@@ -20,6 +20,7 @@
     clearBuffer,
     defineFrame,
     toCommandArgs,
+    type CaptureResponse,
     type DefineFrameResponse,
   } from '../lib/poseTracker'
   import type { createFrameDefineWizard } from '../lib/wizard/frameDefine.svelte'
@@ -64,17 +65,20 @@
   }
 
   async function handleCapture() {
-    if (!armState.pose) return
+    // Re-entrancy guard: the Capture button's `disabled={capture.isPending}`
+    // paints asynchronously, so a fast double-click can fire this twice
+    // synchronously before the DOM updates. A second concurrent
+    // capture_point call would advance the backend buffer without a
+    // matching wizard.recordCapture (step>3 guard drops it), desyncing the
+    // buffer the 3-point define runs against from the wizard's count.
+    if (capture.isPending) return
     try {
-      await capture.mutateAsync(toCommandArgs(capturePoint()))
-      // Snapshot the live TCP pose the operator just captured — the same
-      // pose the backend just appended to its buffer. Re-read (rather than
-      // reuse the pre-await value) so we reflect the freshest poll, and
-      // re-guard for null since TS can't narrow a reactive property across
-      // an await.
-      const pose = armState.pose
-      if (!pose) return
-      wizard.recordCapture({ ...pose })
+      // Source the captured pose from the capture_point RESPONSE, not the
+      // armState poll — it's the exact point the backend appended to its
+      // buffer, whereas the poll can be up to 500ms stale and could reflect
+      // a different pose than what was just captured.
+      const res = (await capture.mutateAsync(toCommandArgs(capturePoint()))) as unknown as CaptureResponse
+      wizard.recordCapture(res.pose)
     } catch (err) {
       wizard.setError(errorMessage(err))
     }
@@ -146,8 +150,10 @@
         </button>
       </form>
     {:else if wizard.step >= 1 && wizard.step <= 3}
-      <p class="text-gray-9 text-sm">{CAPTURE_PROMPTS[wizard.step]}</p>
-      <p class="text-subtle-1 text-xs">{wizard.captures.length} / 3 captured</p>
+      <div aria-live="polite">
+        <p class="text-gray-9 text-sm">{CAPTURE_PROMPTS[wizard.step]}</p>
+        <p class="text-subtle-1 text-xs">{wizard.captures.length} / 3 captured</p>
+      </div>
       <button
         type="button"
         onclick={handleCapture}
@@ -188,7 +194,7 @@
     {/if}
 
     {#if wizard.error}
-      <p class="text-danger-dark text-xs">{wizard.error}</p>
+      <p class="text-danger-dark text-xs" role="alert">{wizard.error}</p>
     {/if}
   </div>
 </FloatingPanel>
