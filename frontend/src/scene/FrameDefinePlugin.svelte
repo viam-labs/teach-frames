@@ -1,10 +1,11 @@
 <script lang="ts">
-  // In-scene "spatial story" for the 3-point frame-define wizard: numbered
-  // markers at each captured point, a live axis preview from P0 toward the
-  // current TCP while capturing, and a provisional frame triad once all 3
-  // points are in. Reads the SAME wizard store the panel (FrameDefineWizard)
-  // drives (see App.svelte) and the SAME live armState.pose TcpTriad polls —
-  // this component owns no poll of its own.
+  // In-scene "spatial story" for the frame-define wizard: numbered markers at
+  // each captured point, a 3point-only live guide line from P0 toward the
+  // current TCP while capturing, and a method-appropriate provisional frame
+  // triad during the preview phase (via provisionalTriad). Reads the SAME
+  // wizard store the panel (FrameDefineWizard) drives (see App.svelte) and
+  // the SAME live armState.pose TcpTriad polls — this component owns no
+  // poll of its own.
   import { T } from '@threlte/core'
   import { MeshLineGeometry, MeshLineMaterial } from '@threlte/extras'
   import { AxesHelper } from '@viamrobotics/motion-tools/lib'
@@ -12,7 +13,7 @@
   import { armState } from '../lib/armState.svelte'
   import type { createFrameDefineWizard } from '../lib/wizard/frameDefine.svelte'
   import type { PoseMap } from '../lib/poseTracker'
-  import { threePointBasis, basisToQuaternion } from './frameGeometry'
+  import { provisionalTriad } from './provisionalTriad'
 
   let { wizard }: { wizard: ReturnType<typeof createFrameDefineWizard> } = $props()
 
@@ -28,30 +29,20 @@
   // Only the preview phase shows the provisional triad — once committed,
   // the real world_state_store triad takes over, and this must stop
   // drawing or the scene would show two triads at once.
-  const provisionalBasis = $derived(
-    wizard.phase === 'preview' && wizard.captures.length === 3
-      ? threePointBasis(wizard.captures[0], wizard.captures[1], wizard.captures[2])
-      : null,
+  const triad = $derived(
+    wizard.phase === 'preview' ? provisionalTriad(wizard.method, wizard.captures) : null,
   )
 
-  const provisionalTriad = $derived(
-    provisionalBasis
-      ? {
-          position: [
-            provisionalBasis.origin[0] * MM_TO_M,
-            provisionalBasis.origin[1] * MM_TO_M,
-            provisionalBasis.origin[2] * MM_TO_M,
-          ] as [number, number, number],
-          quaternion: basisToQuaternion(provisionalBasis),
-        }
-      : null,
-  )
-
-  // Live preview: while capturing and at least P0 is down, draw a thin
-  // guide line from the origin to the live TCP — it previews whichever
-  // axis point is currently being taught.
+  // Live preview: while capturing 3point and at least P0 is down, draw a
+  // thin guide line from the origin to the live TCP — it previews whichever
+  // axis point is currently being taught. The other methods only ever
+  // capture a single point, so a guide line toward the live TCP wouldn't
+  // preview anything meaningful.
   const previewLine = $derived(
-    wizard.phase === 'capturing' && wizard.captures.length >= 1 && armState.pose
+    wizard.method === '3point' &&
+    wizard.phase === 'capturing' &&
+    wizard.captures.length >= 1 &&
+    armState.pose
       ? [
           new Vector3(...toScenePosition(wizard.captures[0])),
           new Vector3(...toScenePosition(armState.pose)),
@@ -76,10 +67,10 @@
   </T.Mesh>
 {/if}
 
-{#if provisionalTriad}
+{#if triad}
   <AxesHelper
-    position={provisionalTriad.position}
-    quaternion={provisionalTriad.quaternion}
+    position={triad.position}
+    quaternion={triad.quaternion}
     length={0.12}
     width={3}
     depthTest={false}
