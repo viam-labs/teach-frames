@@ -88,6 +88,13 @@ Confirmed against `@viamrobotics/motion-tools`:
   Safe for the live scene: the arm + taught-frame triads come from the robot's
   `frameSystemConfig` + `world_state_store`; part config only tints frame colors
   and drives build-mode editing, which we don't use.
+  **Second seam (found when clicking a component):** `useFragmentInfo` has the
+  same standalone path (`createAppQuery('getFragment')`, via the Details panel's
+  fragment check) and the same crash + UI lockup. Pass an empty
+  `componentNameToFragmentInfo={}` to route it embedded too. `usePartConfig` and
+  `useFragmentInfo` are the *only* `createAppQuery`/`createAppMutation` sites in
+  the Visualizer, so these two props fully close the app-cloud dependency for our
+  cookie-only Application (no `ViamAppProvider` anywhere).
 - We **stay off** the Visualizer's `interactionMode` union
   (`navigate|measure|select|gizmo` — a fixed type; a new mode would fork the
   package). We don't need it: capture is *physical* — jog the real TCP to the
