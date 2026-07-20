@@ -2,6 +2,8 @@
   import type { Action } from 'svelte/action'
   import { createResourceMutation, createResourceQuery, usePolling } from '@viamrobotics/svelte-sdk'
   import { DashboardPortal, FloatingPanel } from '@viamrobotics/motion-tools'
+  import { Icon } from '@viamrobotics/prime-core'
+  import DashboardToggle from './DashboardToggle.svelte'
   import { poseTrackerClient } from '../lib/clients'
   import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
@@ -195,14 +197,11 @@
 </script>
 
 <DashboardPortal>
-  <button
-    type="button"
-    onclick={() => (open = !open)}
-    aria-pressed={open}
-    class={`${toggleBase} ${open ? toggleActive : toggleInactive}`}
-  >
-    Jog
-  </button>
+  <DashboardToggle active={open} label="Jog" onclick={() => (open = !open)}>
+    {#snippet children()}
+      <Icon name="gamepad" size="base" />
+    {/snippet}
+  </DashboardToggle>
 </DashboardPortal>
 
 <FloatingPanel

@@ -9,7 +9,9 @@
   // passed down as a prop) so the scene plugin (Task 5) can read/write the
   // SAME instance and draw the matching spatial story.
   import { createResourceMutation } from '@viamrobotics/svelte-sdk'
-  import { FloatingPanel } from '@viamrobotics/motion-tools'
+  import { DashboardPortal, FloatingPanel } from '@viamrobotics/motion-tools'
+  import { Icon } from '@viamrobotics/prime-core'
+  import DashboardToggle from './DashboardToggle.svelte'
   import { poseTrackerClient } from '../lib/clients'
   import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
@@ -126,6 +128,14 @@
     wizard.reset()
   }
 </script>
+
+<DashboardPortal>
+  <DashboardToggle active={open} label="Define frame" onclick={() => (open = !open)}>
+    {#snippet children()}
+      <Icon name="axis-arrow" size="base" />
+    {/snippet}
+  </DashboardToggle>
+</DashboardPortal>
 
 <FloatingPanel
   title="Define Frame"
