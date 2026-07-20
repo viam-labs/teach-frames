@@ -7,6 +7,7 @@
   import { createFrameDefineWizard } from './lib/wizard/frameDefine.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
   import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
+  import ManageFramesPanel from './panels/ManageFramesPanel.svelte'
   import JogPanel from './panels/JogPanel.svelte'
   import TcpTriad from './scene/TcpTriad.svelte'
   import FrameDefinePlugin from './scene/FrameDefinePlugin.svelte'
@@ -67,6 +68,7 @@
             <TcpTriad />
             <FrameDefinePlugin {wizard} />
             <FrameDefineWizard {wizard} />
+            <ManageFramesPanel />
             <JogPanel />
           {/snippet}
         </Visualizer>
