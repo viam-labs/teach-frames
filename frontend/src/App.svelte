@@ -4,11 +4,18 @@
   import { Struct } from '@viamrobotics/sdk'
   import { currentMachine, provideMachineId, type MachineIdentity } from './lib/machine'
   import { selectedResource } from './lib/resource.svelte'
+  import { createFrameDefineWizard } from './lib/wizard/frameDefine.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
+  import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
   import TcpTriad from './scene/TcpTriad.svelte'
 
   let machine: MachineIdentity | undefined
   let error: string | undefined
+
+  // Single shared instance: the panel (this file's <FrameDefineWizard>) and
+  // the scene plugin (Task 5) must read/write the SAME wizard store so the
+  // panel's steps and the scene's spatial story never disagree.
+  const wizard = createFrameDefineWizard()
 
   try {
     machine = currentMachine()
@@ -56,6 +63,7 @@
         <Visualizer partID={machine.id} {localConfigProps} {componentNameToFragmentInfo}>
           {#snippet children()}
             <TcpTriad />
+            <FrameDefineWizard {wizard} />
           {/snippet}
         </Visualizer>
       </div>
