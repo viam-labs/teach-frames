@@ -32,5 +32,21 @@ export default defineConfig(async () => ({
     },
   },
   build: { outDir: 'dist', emptyOutDir: true, target: 'esnext' },
-  test: { environment: 'jsdom', globals: true },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/vitest.setup.ts'],
+    // @viamrobotics/motion-tools' `./lib` entry re-exports a .svelte
+    // component (AxesHelper) alongside plain classes/functions (see the
+    // optimizeDeps comment above). Vitest's default dep externalization loads
+    // node_modules packages via Node's native ESM loader, which chokes on the
+    // unbundled .svelte source ("Unknown file extension '.svelte'") the
+    // moment anything from `./lib` is imported — even just OrientationVector.
+    // Inlining routes it through Vite's own transform pipeline (svelte()
+    // plugin included) instead, matching how the dev/build pipeline handles
+    // it. `@threlte/core` (motion-tools' own dependency, also shipped as
+    // unbundled .svelte source) hits the same problem transitively, so it
+    // needs inlining too.
+    server: { deps: { inline: ['@viamrobotics/motion-tools', '@threlte/core'] } },
+  },
 }))

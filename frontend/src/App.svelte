@@ -5,6 +5,7 @@
   import { currentMachine, provideMachineId, type MachineIdentity } from './lib/machine'
   import { selectedResource } from './lib/resource.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
+  import TcpTriad from './scene/TcpTriad.svelte'
 
   let machine: MachineIdentity | undefined
   let error: string | undefined
@@ -42,7 +43,7 @@
       <div class="viz-host">
         <Visualizer partID={machine.id} {localConfigProps}>
           {#snippet children()}
-            <!-- scene plugins + panels mount here in later tasks -->
+            <TcpTriad />
           {/snippet}
         </Visualizer>
       </div>
