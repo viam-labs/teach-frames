@@ -14,16 +14,21 @@ export default defineConfig(async () => ({
   // doesn't recognize as a static asset type by default.
   assetsInclude: ['**/*.hdr'],
   optimizeDeps: {
-    esbuildOptions: { target: 'esnext' },
-    // @viamrobotics/motion-tools ships unbundled source that imports .glsl and
-    // .hdr assets. Dep pre-bundling (dev) runs BEFORE the glsl()/assetsInclude
-    // plugins, so those imports fail there ("stream did not contain valid
-    // UTF-8", glsl parse errors). Excluding the package skips pre-bundling and
-    // routes its source through the normal plugin pipeline, where glsl() and
-    // assetsInclude handle those assets. Production `build` was unaffected
-    // because it always runs the full pipeline. The reference app never hit
-    // this: there motion-tools is local source, not a pre-bundled dependency.
-    exclude: ['@viamrobotics/motion-tools'],
+    // @viamrobotics/motion-tools ships unbundled source (110 .svelte files plus
+    // .glsl shaders and a .hdr env map). vite-plugin-svelte already teaches the
+    // dep optimizer to handle .svelte during pre-bundle; only .glsl/.hdr block
+    // it ("stream did not contain valid UTF-8", glsl parse errors). Teaching the
+    // optimizer those two loaders lets motion-tools pre-bundle fully — which is
+    // essential, because EXCLUDING it instead severs its many transitive
+    // CommonJS deps (classnames, three-perf's nested tweakpane@3, …) from the
+    // CJS->ESM interop that only pre-bundling provides, breaking `import x from`
+    // in the browser. .hdr -> dataurl (the code imports it as a URL string),
+    // .glsl -> text (imported as a raw shader string; these shaders use no
+    // #include, so glsl()'s extra processing isn't needed at pre-bundle time).
+    esbuildOptions: {
+      target: 'esnext',
+      loader: { '.hdr': 'dataurl', '.glsl': 'text' },
+    },
   },
   build: { outDir: 'dist', emptyOutDir: true, target: 'esnext' },
   test: { environment: 'jsdom', globals: true },
