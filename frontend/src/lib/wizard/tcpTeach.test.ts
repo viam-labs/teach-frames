@@ -61,6 +61,12 @@ describe('tcpTeach wizard', () => {
     w.finish()
     expect(w.phase).toBe('done')
     expect(w.done).toBe(true)
+
+    // also reachable from the orientation phase
+    const w2 = createTcpTeachWizard()
+    w2.start(); w2.recordCapture(4); w2.solved(posResult); w2.toOrientation()
+    w2.finish()
+    expect(w2.phase).toBe('done')
   })
 
   it('setError surfaces a message without losing the capture count', () => {
