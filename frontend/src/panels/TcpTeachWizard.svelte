@@ -56,6 +56,7 @@
   }
 
   async function handleTeachPosition() {
+    if (teachPos.isPending) return
     try {
       const res = (await teachPos.mutateAsync(toCommandArgs(teachTcpPosition()))) as unknown as TeachTcpPositionResponse
       if (res?.committed) { wizard.solved({ offset: res.offset, residual_rms: res.residual_rms }); void bufferQ.refetch() }
@@ -67,9 +68,15 @@
     }
   }
 
-  async function handleReteach() { await clearServerBuffer(); wizard.reteach(); void bufferQ.refetch() }
+  async function handleReteach() {
+    if (clear.isPending) return
+    await clearServerBuffer()
+    wizard.reteach()
+    void bufferQ.refetch()
+  }
 
   async function handleTeachOrientation() {
+    if (teachOri.isPending) return
     try {
       const res = (await teachOri.mutateAsync(
         toCommandArgs(teachTcpOrientation(oX, oY, oZ, theta)),
@@ -203,6 +210,7 @@
             type="number"
             step="any"
             bind:value={oX}
+            aria-label="Orientation vector X"
             class="border-medium hover:border-gray-6 focus:border-gray-9 text-gray-9 min-h-11 w-20 rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
           />
         </label>
@@ -212,6 +220,7 @@
             type="number"
             step="any"
             bind:value={oY}
+            aria-label="Orientation vector Y"
             class="border-medium hover:border-gray-6 focus:border-gray-9 text-gray-9 min-h-11 w-20 rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
           />
         </label>
@@ -221,6 +230,7 @@
             type="number"
             step="any"
             bind:value={oZ}
+            aria-label="Orientation vector Z"
             class="border-medium hover:border-gray-6 focus:border-gray-9 text-gray-9 min-h-11 w-20 rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
           />
         </label>
@@ -230,6 +240,7 @@
             type="number"
             step="any"
             bind:value={theta}
+            aria-label="Orientation angle theta (degrees)"
             class="border-medium hover:border-gray-6 focus:border-gray-9 text-gray-9 min-h-11 w-20 rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
           />
         </label>
