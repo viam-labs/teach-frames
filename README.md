@@ -44,6 +44,8 @@ Read-only mirror that syncs the pose-tracker's frame set into the Viam visualiza
 
 The service declares `pose_tracker` as a required dependency. When the pose-tracker is rebuilt (e.g. after `define_frame` persists a new frame), the visualizer reconnects and refreshes via `ListUUIDs`/`GetTransform`.
 
+> **Known issue and stopgap.** The `world_state_store` mirror's WSS stream to the Viam visualizer/frontend goes permanently stale after the pose-tracker's first `AlwaysRebuild` reconfigure (see `docs/plans/2026-07-20-motion-tools-wss-reconfigure-upstream-patch.md` for the root cause), so deletions and edits to taught frames stop reaching an already-connected client. The `teach-pendant` frontend in this repo works around this by remounting the `<Visualizer>` after a define/delete/clear made through its own UI, which forces a fresh `world_state_store` snapshot. Two known costs: (1) a brief scene refresh on those actions — camera and floating-panel positions may reset, and the Manage Frames panel closes; and (2) **direct edits to the pose-tracker config made outside this UI still require a manual page reload** to show up, until the upstream fix lands.
+
 ## Teaching workflow: DoCommand reference
 
 All DoCommands are sent to the **pose-tracker** component. Each command is a single-key map.

@@ -19,6 +19,7 @@
   import { armState } from '../lib/armState.svelte'
   import { motion } from '../lib/motion.svelte'
   import { bumpCaptureBuffer } from '../lib/captureBuffer.svelte'
+  import { bumpFrameRevision } from '../lib/frameRevision.svelte'
   import {
     capturePoint,
     clearBuffer,
@@ -148,6 +149,9 @@
         bumpCaptureBuffer()
         wizard.committed()
         void framesQuery.refetch()
+        // Force the Visualizer to remount and re-snapshot world_state_store —
+        // see the {#key frameRevision.value} comment in App.svelte.
+        bumpFrameRevision()
       } else {
         wizard.setError('define_frame did not commit')
       }

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-20
 **Target project:** `@viamrobotics/motion-tools` (the `visualization` / motion-tools package that ships `<Visualizer>`), with a contributing factor in `@viamrobotics/svelte-sdk`.
-**Status:** context capture for a *separate* upstream PR. In `teach-frames` we ship a client-side workaround (render taught frames ourselves from `list_frames`, decoupled from the WSS stream — see the Bug-1 fix). This doc is what a person needs to fix it properly upstream.
+**Status:** context capture for a *separate* upstream PR. In `teach-frames` we ship a client-side stopgap that remounts the `<Visualizer>` after our own frame mutations to force a fresh `world_state_store` snapshot, while KEEPING the `world_state_store` mirror configured so the main Viam web app is unaffected; it covers mutations made in this UI but NOT direct machine-config edits (those still need a page reload) until this upstream fix lands. This doc is what a person needs to fix it properly upstream.
 
 ## Symptom (as seen in a downstream app)
 
@@ -51,5 +51,5 @@ Both steps are required (see "Compounding issue"). A narrower alternative — gi
 - Regression guard: after a simulated reconfigure, an entity removed on the server disappears client-side within one poll/reconcile cycle; an added entity appears; an updated one moves — all without a page reload.
 
 ## Cross-references
-- Downstream root-cause investigation and the client-side workaround we shipped: `teach-frames` Bug 1 (see the remaining-work handoff and the roadmap memory).
+- Downstream root-cause investigation and the client-side stopgap we shipped (remount `<Visualizer>` after our own frame mutations via `frontend/src/lib/frameRevision.svelte.ts`, keyed in `frontend/src/App.svelte`): `teach-frames` Bug 1 (see the remaining-work handoff and the roadmap memory).
 - The teach-frames mirror that exposed it: `models/worldstatestore/{model,diff,mapping}.go`.

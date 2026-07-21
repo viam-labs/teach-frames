@@ -5,6 +5,7 @@
   import { currentMachine, provideMachineId, type MachineIdentity } from './lib/machine'
   import { selectedResource } from './lib/resource.svelte'
   import { createFrameDefineWizard } from './lib/wizard/frameDefine.svelte'
+  import { frameRevision } from './lib/frameRevision.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
   import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
   import ManageFramesPanel from './panels/ManageFramesPanel.svelte'
@@ -63,15 +64,28 @@
   <ViamProvider dialConfigs={{ [machine.id]: machine.dialConf }}>
     {#if selectedResource.name}
       <div class="viz-host">
-        <Visualizer partID={machine.id} {localConfigProps} {componentNameToFragmentInfo}>
-          {#snippet children()}
-            <TcpTriad />
-            <FrameDefinePlugin {wizard} />
-            <FrameDefineWizard {wizard} />
-            <ManageFramesPanel />
-            <JogPanel />
-          {/snippet}
-        </Visualizer>
+        <!--
+          Keyed on frameRevision so the Visualizer scene remounts (and
+          useWorldState re-initializes/re-snapshots) after OUR OWN taught-frame
+          commits/deletes/clears. Stopgap for a motion-tools bug where the
+          world_state_store live stream goes permanently stale after the first
+          AlwaysRebuild reconfigure — see
+          docs/plans/2026-07-20-motion-tools-wss-reconfigure-upstream-patch.md.
+          Scoped to just <Visualizer> (not ViamProvider) so the robot
+          connection + query cache survive the remount; only the 3D scene
+          re-initializes.
+        -->
+        {#key frameRevision.value}
+          <Visualizer partID={machine.id} {localConfigProps} {componentNameToFragmentInfo}>
+            {#snippet children()}
+              <TcpTriad />
+              <FrameDefinePlugin {wizard} />
+              <FrameDefineWizard {wizard} />
+              <ManageFramesPanel />
+              <JogPanel />
+            {/snippet}
+          </Visualizer>
+        {/key}
       </div>
     {:else}
       <ResourcePicker />

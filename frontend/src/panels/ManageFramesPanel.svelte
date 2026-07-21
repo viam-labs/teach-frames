@@ -13,6 +13,7 @@
   import { poseTrackerClient } from '../lib/clients'
   import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
+  import { bumpFrameRevision } from '../lib/frameRevision.svelte'
   import {
     clearFrames,
     deleteFrame,
@@ -57,6 +58,10 @@
       }
       await frames.refetch()
       pendingConfirm = null
+      // Force the Visualizer to remount and re-snapshot world_state_store —
+      // see the {#key frameRevision.value} comment in App.svelte. Covers both
+      // 'delete' and 'clearAll', which share this success path.
+      bumpFrameRevision()
     } catch {
       // Surfaced via del.error / clearAll.error below.
     }
