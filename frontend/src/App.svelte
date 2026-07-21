@@ -6,10 +6,12 @@
   import { selectedResource } from './lib/resource.svelte'
   import { createFrameDefineWizard } from './lib/wizard/frameDefine.svelte'
   import { createTcpTeachWizard } from './lib/wizard/tcpTeach.svelte'
+  import { createHandeyeWizard } from './lib/wizard/handeyeCalib.svelte'
   import { frameRevision } from './lib/frameRevision.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
   import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
   import TcpTeachWizard from './panels/TcpTeachWizard.svelte'
+  import HandeyeWizard from './panels/HandeyeWizard.svelte'
   import ManageFramesPanel from './panels/ManageFramesPanel.svelte'
   import JogPanel from './panels/JogPanel.svelte'
   import TcpTriad from './scene/TcpTriad.svelte'
@@ -25,6 +27,9 @@
   // Same reasoning as `wizard` above: created outside the {#key frameRevision}
   // block so TCP-teach progress survives the Bug-1 scene remount.
   const tcpWizard = createTcpTeachWizard()
+  // Same reasoning again: hand-eye calibration progress must survive the
+  // Bug-1 scene remount too.
+  const handeyeWizard = createHandeyeWizard()
 
   try {
     machine = currentMachine()
@@ -87,6 +92,7 @@
               <FrameDefinePlugin {wizard} />
               <FrameDefineWizard {wizard} />
               <TcpTeachWizard wizard={tcpWizard} />
+              <HandeyeWizard wizard={handeyeWizard} />
               <ManageFramesPanel />
               <JogPanel />
             {/snippet}
