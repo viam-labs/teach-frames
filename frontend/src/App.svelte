@@ -5,9 +5,11 @@
   import { currentMachine, provideMachineId, type MachineIdentity } from './lib/machine'
   import { selectedResource } from './lib/resource.svelte'
   import { createFrameDefineWizard } from './lib/wizard/frameDefine.svelte'
+  import { createTcpTeachWizard } from './lib/wizard/tcpTeach.svelte'
   import { frameRevision } from './lib/frameRevision.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
   import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
+  import TcpTeachWizard from './panels/TcpTeachWizard.svelte'
   import ManageFramesPanel from './panels/ManageFramesPanel.svelte'
   import JogPanel from './panels/JogPanel.svelte'
   import TcpTriad from './scene/TcpTriad.svelte'
@@ -20,6 +22,9 @@
   // the scene plugin (Task 5) must read/write the SAME wizard store so the
   // panel's steps and the scene's spatial story never disagree.
   const wizard = createFrameDefineWizard()
+  // Same reasoning as `wizard` above: created outside the {#key frameRevision}
+  // block so TCP-teach progress survives the Bug-1 scene remount.
+  const tcpWizard = createTcpTeachWizard()
 
   try {
     machine = currentMachine()
@@ -81,6 +86,7 @@
               <TcpTriad />
               <FrameDefinePlugin {wizard} />
               <FrameDefineWizard {wizard} />
+              <TcpTeachWizard wizard={tcpWizard} />
               <ManageFramesPanel />
               <JogPanel />
             {/snippet}
