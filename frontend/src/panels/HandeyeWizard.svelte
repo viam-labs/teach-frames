@@ -16,7 +16,7 @@
   import { useMachineId } from '../lib/machine'
   import {
     getHandeyeMode, handeyeSnapshot, captureHandeyePoint, captureHandeyeTarget, captureHandeyeView,
-    getHandeyeBuffer, clearHandeyeBuffer, solveHandeye, displayToNativePixel, toCommandArgs,
+    clearHandeyeBuffer, solveHandeye, displayToNativePixel, toCommandArgs,
     type HandEyeModeResponse, type HandEyeSnapshotResponse, type CaptureHandEyeResponse,
     type CaptureHandEyeViewResponse, type SolveHandEyeResponse,
   } from '../lib/poseTracker'
@@ -29,7 +29,6 @@
 
   // 4th options arg required (see FrameDefineWizard/ManageFramesPanel).
   const modeQ = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getHandeyeMode()), () => ({}))
-  const bufferQ = createResourceQuery(pt, 'doCommand', () => toCommandArgs(getHandeyeBuffer()), () => ({}))
   const snap = createResourceMutation(pt, 'doCommand')
   const capturePt = createResourceMutation(pt, 'doCommand')
   const captureTgt = createResourceMutation(pt, 'doCommand')
@@ -88,9 +87,10 @@
       if (capturePt.isPending) return
       try {
         const res = (await capturePt.mutateAsync(toCommandArgs(captureHandeyePoint(u, v)))) as unknown as CaptureHandEyeResponse
-        dots = [...dots, { x: event.offsetX, y: event.offsetY }]
+        // Normalized fractions (not raw display px) so dots stay put when the
+        // resizable panel changes the <img>'s rendered size.
+        dots = [...dots, { x: event.offsetX / imgEl.clientWidth, y: event.offsetY / imgEl.clientHeight }]
         wizard.recordCapture(res.buffer_len)
-        void bufferQ.refetch()
       } catch (err) {
         wizard.setError(errorMessage(err))
       }
@@ -101,7 +101,6 @@
       try {
         const res = (await captureView.mutateAsync(toCommandArgs(captureHandeyeView(u, v)))) as unknown as CaptureHandEyeViewResponse
         wizard.recordCapture(res.buffer_len)
-        void bufferQ.refetch()
       } catch (err) {
         wizard.setError(errorMessage(err))
       } finally {
@@ -124,7 +123,6 @@
       wizard.clearCaptures()
       dots = []
       snapshot = undefined
-      void bufferQ.refetch()
     } catch (err) {
       wizard.setError(errorMessage(err))
     }
@@ -138,7 +136,6 @@
         wizard.solved({ residual_rms: res.residual_rms, parent: res.parent })
         dots = []
         snapshot = undefined
-        void bufferQ.refetch()
       } else {
         wizard.setError('solve_handeye did not commit (check platform credentials)')
       }
@@ -241,7 +238,7 @@
               {#each dots as dot, i (i)}
                 <span
                   class="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-9 ring-2 ring-white"
-                  style={`left:${dot.x}px; top:${dot.y}px`}
+                  style={`left:${dot.x * 100}%; top:${dot.y * 100}%`}
                 ></span>
               {/each}
             </div>
@@ -304,24 +301,6 @@
       </button>
     {/if}
 
-    {#if snap.error}
-      <p class="text-danger-dark text-xs" role="alert">{snap.error.message}</p>
-    {/if}
-    {#if capturePt.error}
-      <p class="text-danger-dark text-xs" role="alert">{capturePt.error.message}</p>
-    {/if}
-    {#if captureView.error}
-      <p class="text-danger-dark text-xs" role="alert">{captureView.error.message}</p>
-    {/if}
-    {#if captureTgt.error}
-      <p class="text-danger-dark text-xs" role="alert">{captureTgt.error.message}</p>
-    {/if}
-    {#if clear.error}
-      <p class="text-danger-dark text-xs" role="alert">{clear.error.message}</p>
-    {/if}
-    {#if solveM.error}
-      <p class="text-danger-dark text-xs" role="alert">{solveM.error.message}</p>
-    {/if}
     {#if wizard.error}
       <p class="text-danger-dark text-xs" role="alert">{wizard.error}</p>
     {/if}
