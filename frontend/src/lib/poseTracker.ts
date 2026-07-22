@@ -142,11 +142,11 @@ export const getHandeyeBuffer = () => ({ get_handeye_buffer: {} })
 export const clearHandeyeBuffer = () => ({ clear_handeye_buffer: {} })
 export const solveHandeye = () => ({ solve_handeye: {} })
 
-// Maps a click at (displayX, displayY) inside an <img> of rendered size
-// (clientW, clientH) to the native source pixel of an image (naturalW, naturalH).
-// The <img> is styled `object-fit: fill` (see HandEyePanel.svelte), so this is a
-// straight ratio with no letterbox offset — if that ever changes to
-// `object-fit: contain`, this helper must add the letterbox offsets to match.
+// Maps a click at (displayX, displayY) inside the rendered camera image of size
+// (clientW, clientH) to the native source pixel (naturalW, naturalH). The image
+// is styled `object-fit: fill` (see HandeyeWizard.svelte), so this is a straight
+// ratio with no letterbox offset — if that ever changes to `object-fit: contain`,
+// this helper must add the letterbox offsets to match.
 // Result is clamped to valid pixel indices [0, natural-1].
 export function displayToNativePixel(
   displayX: number, displayY: number,

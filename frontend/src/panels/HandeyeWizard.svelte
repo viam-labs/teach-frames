@@ -1,8 +1,8 @@
 <script lang="ts">
   // Mode-adaptive hand-eye calibration wizard, mounted in <Visualizer>'s
-  // children (see App.svelte). Ports the DoCommand wiring of the two legacy
-  // panels (HandEyePanel.svelte / EyeInHandPanel.svelte) into one panel driven
-  // by `get_handeye_mode`, matching the prime chrome of FrameDefineWizard /
+  // children (see App.svelte). One adaptive panel covering both eye-to-hand and
+  // eye-in-hand calibration, driven by `get_handeye_mode`, matching the prime
+  // chrome of FrameDefineWizard /
   // TcpTeachWizard. Store lives in `wizard` (created in App.svelte) so panel
   // state survives the Bug-1 frameRevision remount — this panel intentionally
   // does NOT import/bump frameRevision: the camera triad updates via

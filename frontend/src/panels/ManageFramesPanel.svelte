@@ -2,10 +2,7 @@
   // Floating panel for the OTHER half of the frame lifecycle: listing,
   // deleting, and clearing already-committed frames. Defining a frame lives
   // in FrameDefineWizard.svelte — this panel intentionally has no define UI,
-  // ported (list/delete/clear + confirm-before-destroy) from the legacy
-  // FramePanel.svelte, which also serves as the query/mutation wiring
-  // reference; see that file for the "why" behind the 4-arg query form and
-  // the confirm state machine.
+  // list/delete/clear + confirm-before-destroy for taught frames.
   import { createResourceMutation, createResourceQuery } from '@viamrobotics/svelte-sdk'
   import { DashboardPortal, FloatingPanel } from '@viamrobotics/motion-tools'
   import { Icon } from '@viamrobotics/prime-core'
@@ -25,7 +22,7 @@
   const machineId = useMachineId()
   const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
   // 4th arg (options) required — a lone trailing arg is treated as options and
-  // would drop our command args. See FramePanel.svelte.
+  // would drop our command args, sending an empty command.
   const frames = createResourceQuery(pt, 'doCommand', () => toCommandArgs(listFrames()), () => ({}))
   const del = createResourceMutation(pt, 'doCommand')
   const clearAll = createResourceMutation(pt, 'doCommand')

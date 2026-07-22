@@ -29,11 +29,10 @@
   const jog = createResourceMutation(pt, 'doCommand')
 
   // Stop is its own mutation so it stays callable — and immediately in-flight —
-  // even while a jog/move is pending. It is never gated by motion.busy. Mirrors
-  // StatusBar.svelte's handleStop; rendered into the dashboard toolbar below
-  // since the global shell (StatusBar isn't mounted here) has no stop control
-  // of its own — this IS that control, always visible regardless of whether
-  // the Jog panel itself is open.
+  // even while a jog/move is pending. It is never gated by motion.busy. Rendered
+  // into the dashboard toolbar below since the shell has no other stop control:
+  // this IS the global stop, always visible regardless of whether the Jog panel
+  // itself is open.
   const stop = createResourceMutation(pt, 'doCommand')
 
   function handleStop() {
@@ -65,8 +64,8 @@
     () => (noArmConfigured || motion.busy > 0 ? false : 500),
   )
 
-  // Publish the live arm state into the shared store so TcpPanel (and jogging
-  // here) can react to whether an arm is present.
+  // Publish the live arm state into the shared store so scene overlays (and
+  // jogging here) can react to the pose and whether an arm is present.
   $effect(() => {
     if (armStateQuery.data) {
       const parsed = parseArmState(armStateQuery.data as Record<string, unknown>)
@@ -314,9 +313,9 @@
 
 <!-- Global STOP, rendered into the always-visible dashboard toolbar (not
      inside the FloatingPanel body) so it stays reachable even when the Jog
-     panel is collapsed — the shell has no other stop control (StatusBar
-     isn't mounted here). Never gated on motion.busy/armState.hasArm; only
-     disabled while the stop command itself is in flight. -->
+     panel is collapsed — it's the shell's only stop control. Never gated on
+     motion.busy/armState.hasArm; only disabled while the stop command itself
+     is in flight. -->
 <DashboardPortal>
   <button
     type="button"
