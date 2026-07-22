@@ -362,8 +362,8 @@ func TestSetComponentFrame_OverridesParentPreservesGeometry(t *testing.T) {
 	out, err := setComponentFrame(cfg, "tool", "my-arm", &r3.Vector{X: 1}, nil)
 	test.That(t, err, test.ShouldBeNil)
 	frame := out["components"].([]interface{})[0].(map[string]interface{})["frame"].(map[string]interface{})
-	test.That(t, frame["parent"], test.ShouldEqual, "my-arm")           // overridden
-	test.That(t, frame["geometry"], test.ShouldNotBeNil)                // preserved
+	test.That(t, frame["parent"], test.ShouldEqual, "my-arm") // overridden
+	test.That(t, frame["geometry"], test.ShouldNotBeNil)      // preserved
 }
 
 // TestSetComponentFrame_OverridesExistingWorldParent is a regression test for
