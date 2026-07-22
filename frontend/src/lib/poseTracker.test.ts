@@ -41,6 +41,14 @@ describe('DoCommand payload builders', () => {
     expect(jogCartesian('yaw', -5)).toEqual({ jog_cartesian: { axis: 'yaw', step: -5 } })
   })
 
+  it('jogCartesian omits frame when not given (back-compat)', () => {
+    expect(jogCartesian('x', 5)).toEqual({ jog_cartesian: { axis: 'x', step: 5 } })
+  })
+
+  it('jogCartesian includes frame when given', () => {
+    expect(jogCartesian('x', 5, 'table')).toEqual({ jog_cartesian: { axis: 'x', step: 5, frame: 'table' } })
+  })
+
   it('jogJoint emits the joint/step verb map', () => {
     expect(jogJoint(2, 5)).toEqual({ jog_joint: { joint: 2, step: 5 } })
   })

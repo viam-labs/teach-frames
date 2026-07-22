@@ -13,12 +13,14 @@
     getArmState,
     jogCartesian,
     jogJoint,
+    listFrames,
     moveToJoints,
     moveToPose,
     parseArmState,
     stopArm,
     toCommandArgs,
     type CartesianAxis,
+    type FramesResponse,
     type PoseMap,
   } from '../lib/poseTracker'
 
@@ -82,6 +84,23 @@
 
   type Mode = 'cartesian' | 'joint' | 'moveto'
   let mode = $state<Mode>('cartesian')
+
+  // Taught frames, for the Cartesian jog Reference picker (World/Tool/<taught
+  // frame>) — lets the operator jog relative to a previously-defined frame,
+  // not just the robot's world/tool basis.
+  const framesQ = createResourceQuery(pt, 'doCommand', () => toCommandArgs(listFrames()), () => ({}))
+  const taughtFrames = $derived(Object.keys((framesQ.data as FramesResponse | undefined)?.frames ?? {}))
+
+  let reference = $state('world')
+
+  // Guard against a reference that pointed at a taught frame which has since
+  // been deleted (e.g. via ManageFramesPanel) — fall back to World rather
+  // than silently jogging in a frame that no longer exists.
+  $effect(() => {
+    if (reference !== 'world' && reference !== 'tool' && !taughtFrames.includes(reference)) {
+      reference = 'world'
+    }
+  })
 
   // "Move to" — absolute go-to-pose / go-to-joints with a two-step confirm.
   // The target fields are a FROZEN editable draft: they are only ever
@@ -341,6 +360,23 @@
       <div class="flex min-w-0 flex-col gap-4">
         {#if mode === 'cartesian'}
           <div class="flex flex-col gap-1.5">
+            <span class="text-subtle-2 text-xs">Reference</span>
+            <div class="flex flex-wrap gap-2" role="group" aria-label="Jog reference frame">
+              <button type="button" class={`${toggleBase} ${reference === 'world' ? toggleActive : toggleInactive}`} onclick={() => (reference = 'world')}>
+                World
+              </button>
+              <button type="button" class={`${toggleBase} ${reference === 'tool' ? toggleActive : toggleInactive}`} onclick={() => (reference = 'tool')}>
+                Tool
+              </button>
+              {#each taughtFrames as f (f)}
+                <button type="button" class={`${toggleBase} ${reference === f ? toggleActive : toggleInactive}`} onclick={() => (reference = f)}>
+                  {f}
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-1.5">
             <span class="text-subtle-2 text-xs">Translation step (mm)</span>
             <div class="flex flex-wrap gap-2" role="group" aria-label="Translation step size">
               {#each TRANSLATION_STEPS as step (step)}
@@ -355,8 +391,8 @@
             {#each TRANSLATION_AXES as axis (axis)}
               <div class="flex items-center gap-3">
                 <span class="text-gray-9 w-16 text-sm font-semibold">{axis.toUpperCase()}</span>
-                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, -transStep)} aria-label="{axis} minus">−</button>
-                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, transStep)} aria-label="{axis} plus">+</button>
+                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, -transStep, reference)} aria-label="{axis} minus">−</button>
+                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, transStep, reference)} aria-label="{axis} plus">+</button>
               </div>
             {/each}
           </div>
@@ -376,8 +412,8 @@
             {#each ROTATION_AXES as axis (axis)}
               <div class="flex items-center gap-3">
                 <span class="text-gray-9 w-16 text-sm font-semibold">{axis[0]?.toUpperCase()}{axis.slice(1)}</span>
-                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, -rotStep)} aria-label="{axis} minus">−</button>
-                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, rotStep)} aria-label="{axis} plus">+</button>
+                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, -rotStep, reference)} aria-label="{axis} minus">−</button>
+                <button type="button" {disabled} class={jogKeyClass} use:jogHold={() => jogCartesian(axis, rotStep, reference)} aria-label="{axis} plus">+</button>
               </div>
             {/each}
           </div>

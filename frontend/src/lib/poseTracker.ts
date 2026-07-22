@@ -15,7 +15,8 @@ import { Struct, type JsonValue } from '@viamrobotics/sdk'
 
 export type CartesianAxis = 'x' | 'y' | 'z' | 'roll' | 'pitch' | 'yaw'
 
-export const jogCartesian = (axis: CartesianAxis, step: number) => ({ jog_cartesian: { axis, step } })
+export const jogCartesian = (axis: CartesianAxis, step: number, frame?: string) =>
+  frame === undefined ? { jog_cartesian: { axis, step } } : { jog_cartesian: { axis, step, frame } }
 export const jogJoint = (joint: number, step: number) => ({ jog_joint: { joint, step } })
 export const stopArm = () => ({ stop_arm: {} })
 export const getArmState = () => ({ get_arm_state: {} })
