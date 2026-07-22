@@ -953,6 +953,254 @@ func TestJogCartesianAllAxes(t *testing.T) {
 	}
 }
 
+// --- jog_cartesian "frame" parameter tests ---
+//
+// NOTE on default vs explicit "world": the pre-existing (pre-"frame") rotation
+// behavior was ALWAYS tool-frame (right-multiply the delta onto the current
+// pose) -- see TestJogCartesianRotationToolFrame/TestJogCartesianAllAxes above,
+// which pass no "frame" key and must keep passing unchanged. A literal reading
+// of "frame absent or world -> identity basis, applied uniformly to rotation"
+// would silently change that default (identity-basis rotation is delta*cur,
+// NOT the pre-existing cur*delta -- verified numerically, they are not equal
+// in general). To satisfy the hard "do not regress existing jog behavior"
+// requirement, the implementation special-cases "frame absent" for ROTATION
+// only to reproduce the exact legacy formula; explicit frame:"world" performs
+// a genuine world-axis (extrinsic) rotation, a new capability that is
+// intentionally distinct from the default. Translation has no such conflict:
+// default and explicit "world" both resolve to the identity basis and are
+// identical to each other and to the pre-existing world-frame translate.
+
+// TestJogCartesianWorldFrameMatchesDefault pins (1) translation: default ==
+// explicit frame:"world" (both identity basis, unchanged from before this
+// feature), and (2) rotation: default reproduces the exact legacy tool-frame
+// (right-multiply) result. See the package note above for why rotation with
+// explicit frame:"world" is NOT expected to equal the default.
+func TestJogCartesianWorldFrameMatchesDefault(t *testing.T) {
+	start := spatialmath.NewPose(r3.Vector{X: 10, Y: 20, Z: 30}, &spatialmath.EulerAngles{Roll: math.Pi / 4, Yaw: math.Pi / 6})
+
+	runJog := func(t *testing.T, args map[string]interface{}) spatialmath.Pose {
+		t.Helper()
+		injArm := inject.NewArm("my-arm")
+		injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+			return start, nil
+		}
+		var moved spatialmath.Pose
+		injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+			moved = p
+			return nil
+		}
+		pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+		pt.arm = injArm
+		_, err := pt.DoCommand(context.Background(), map[string]interface{}{"jog_cartesian": args})
+		test.That(t, err, test.ShouldBeNil)
+		return moved
+	}
+
+	// Translation: default and explicit "world" must match (both identity basis).
+	a := runJog(t, map[string]interface{}{"axis": "x", "step": 5.0})
+	b := runJog(t, map[string]interface{}{"axis": "x", "step": 5.0, "frame": "world"})
+	test.That(t, spatialmath.PoseAlmostEqual(a, b), test.ShouldBeTrue)
+
+	// Rotation: default must reproduce the exact pre-existing tool-frame (right-multiply) result.
+	c := runJog(t, map[string]interface{}{"axis": "yaw", "step": 30.0})
+	expected := spatialmath.Compose(start, spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: 30 * math.Pi / 180}))
+	test.That(t, spatialmath.OrientationAlmostEqual(c.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+}
+
+// TestJogCartesianWorldFrameRotationIsWorldAxis pins the NEW capability
+// enabled by an explicit frame:"world": rotation about the fixed world axes
+// (extrinsic composition, delta applied in world coordinates before cur),
+// which is mathematically distinct from the legacy tool-frame (intrinsic,
+// right-multiply) rotation used by default. This guards the R*delta*R^-1
+// conjugation formula against silently degenerating into the tool-frame
+// formula when R is the identity.
+func TestJogCartesianWorldFrameRotationIsWorldAxis(t *testing.T) {
+	start := spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, &spatialmath.EulerAngles{Roll: math.Pi / 2})
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return start, nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0, "frame": "world"},
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	deltaPose := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: 30 * math.Pi / 180})
+	// world-axis (extrinsic) rotation: delta applied in world coordinates, then cur.
+	expectedWorld := spatialmath.Compose(deltaPose, spatialmath.NewPoseFromOrientation(start.Orientation()))
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expectedWorld.Orientation()), test.ShouldBeTrue)
+
+	// Must differ from the legacy tool-frame (default) result -- otherwise the
+	// new "world" rotation basis silently degenerated into the old behavior.
+	toolResult := spatialmath.Compose(start, deltaPose)
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), toolResult.Orientation()), test.ShouldBeFalse)
+}
+
+// TestJogCartesianToolFrameRotation verifies explicit frame:"tool" reduces to
+// the same right-multiply result as the pre-existing (default) tool-frame
+// rotation -- mirrors TestJogCartesianRotationToolFrame's assertion.
+func TestJogCartesianToolFrameRotation(t *testing.T) {
+	startOri := &spatialmath.EulerAngles{Roll: math.Pi / 2}
+	start := spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, startOri)
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return start, nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0, "frame": "tool"},
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	// pure rotation: position unchanged
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 1.0)
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 2.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 3.0)
+
+	delta := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: 30 * math.Pi / 180})
+	expected := spatialmath.Compose(start, delta)
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+}
+
+// TestJogCartesianTaughtFrameTranslation seeds a taught frame rotated 90deg
+// about +Z, so the frame's local +X axis coincides with world +Y. Jogging
+// +10 along the frame's x axis must move the TCP +10 along world Y (not world
+// X), and the frame's own translation must NOT leak into the jog -- only its
+// orientation is used as the basis.
+func TestJogCartesianTaughtFrameTranslation(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	frameOri := &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 90}
+	pt.store.SetFrame("bracket", "world", spatialmath.NewPose(r3.Vector{X: 100, Y: 200, Z: 0}, frameOri))
+
+	start := spatialmath.NewPose(r3.Vector{X: 5, Y: 5, Z: 5}, &spatialmath.EulerAngles{})
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return start, nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 10.0, "frame": "bracket"},
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 5.0)
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 15.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 5.0)
+}
+
+// TestJogCartesianTaughtFrameRotation uses the same 90deg-about-Z taught frame
+// and jogs the "roll" axis (rotation about the frame's local X, i.e. world Y).
+// The expected orientation is hand-constructed with the documented
+// R*delta*R^-1 conjugation formula (independent of the production code path)
+// and cross-checked against the un-rotated start to guard against a
+// vacuously-passing (no-op) result.
+func TestJogCartesianTaughtFrameRotation(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	frameOri := &spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 90}
+	pt.store.SetFrame("bracket", "world", spatialmath.NewPose(r3.Vector{X: 100, Y: 200, Z: 0}, frameOri))
+
+	start := spatialmath.NewPose(r3.Vector{X: 5, Y: 5, Z: 5}, &spatialmath.EulerAngles{})
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return start, nil
+	}
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt.arm = injArm
+
+	const stepDeg = 40.0
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "roll", "step": stepDeg, "frame": "bracket"},
+	})
+	test.That(t, err, test.ShouldBeNil)
+
+	// position unchanged (pure rotation)
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 5.0)
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 5.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 5.0)
+
+	// Hand-construct the expected orientation with the documented conjugation formula.
+	Rpose := spatialmath.NewPoseFromOrientation(frameOri)
+	deltaPose := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Roll: stepDeg * math.Pi / 180})
+	wPose := spatialmath.Compose(spatialmath.Compose(Rpose, deltaPose), spatialmath.PoseInverse(Rpose))
+	expected := spatialmath.Compose(wPose, spatialmath.NewPoseFromOrientation(start.Orientation()))
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+
+	// Sanity anchor: guards against a vacuously-passing test where the
+	// conjugation collapses to a no-op.
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), start.Orientation()), test.ShouldBeFalse)
+}
+
+// TestJogCartesianUnknownFrame verifies an unrecognized frame name errors and
+// that the arm is NEVER moved -- moving on a bogus/mistyped frame name would
+// silently jog in the wrong (identity) basis.
+func TestJogCartesianUnknownFrame(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}), nil
+	}
+	called := false
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		called = true
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0, "frame": "nope"},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, called, test.ShouldBeFalse)
+}
+
+// TestJogCartesianFrameWrongType verifies a present-but-non-string "frame"
+// value errors (rather than silently coercing to the world default) and does
+// not move the arm.
+func TestJogCartesianFrameWrongType(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}), nil
+	}
+	called := false
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		called = true
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0, "frame": 42.0},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, called, test.ShouldBeFalse)
+}
+
 // Shared 4x4 RGBD fixture for hand-eye tests. Depth is set at pixel (1,1) ONLY,
 // so tests must click u=1, v=1; any other pixel deprojects to "no depth".
 func testIntr() *transform.PinholeCameraIntrinsics {

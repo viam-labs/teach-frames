@@ -32,7 +32,7 @@ import (
 //	{"get_arm_state": {}}                                    — return the current TCP pose and joint positions (degrees) in one call, for the UI poll loop (errors if no arm is configured).
 //	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
 //	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
-//	{"jog_cartesian": {"axis": "x", "step": 5}}               — nudge the TCP by a signed step: x/y/z (mm) translate along the world frame, roll/pitch/yaw (degrees) rotate about the tool frame (errors if no arm is configured or the axis is unknown).
+//	{"jog_cartesian": {"axis": "x", "step": 5, "frame": "world"}} — nudge the TCP by a signed step: x/y/z (mm) translate, roll/pitch/yaw (degrees) rotate, both resolved in the chosen basis ("world"|"tool"|<taught frame name>, default "world"). "tool" uses the current TCP orientation; a taught frame name uses that frame's orientation (its own translation/origin is NOT used -- the jog is always centered on the current TCP point). NOTE: when "frame" is omitted, rotation preserves the original tool-frame (right-multiply) behavior for backward compatibility; an explicit "world" performs a true world-axis rotation, which is not the same operation (errors if no arm is configured, the axis is unknown, or "frame" names an unrecognized taught frame).
 //	{"move_to_joints": {"positions": [deg,…]}}               — move the arm to an absolute joint configuration (degrees); errors if no arm or the count mismatches the arm's joints.
 //	{"move_to_pose": {"pose": {"x":0,"y":0,"z":0,"o_x":0,"o_y":0,"o_z":1,"theta":0}}} — move the TCP to an absolute pose (mm + OV degrees) in the arm base frame; errors if no arm.
 //	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics (and, in eye_in_hand mode, the current flange pose) for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured, or if eye_in_hand mode cannot resolve the arm).
@@ -535,8 +535,12 @@ func (pt *teachTracker) jogJoint(ctx context.Context, raw interface{}) (map[stri
 	return map[string]interface{}{"joints": inputsToDegrees(next)}, nil
 }
 
-// jogCartesian nudges the TCP by a signed step. Translation axes (x/y/z, mm) are
-// world-frame; rotation axes (roll/pitch/yaw, degrees) are tool-frame.
+// jogCartesian nudges the TCP by a signed step. Translation axes (x/y/z, mm)
+// and rotation axes (roll/pitch/yaw, degrees) are both resolved in the basis
+// named by the optional "frame" argument ("world"|"tool"|<taught frame name>,
+// default "world"). See basisFor for how the basis orientation is resolved,
+// and the DoCommand doc-comment for the backward-compatibility caveat on
+// default (omitted "frame") rotation.
 func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
 	if pt.arm == nil {
 		return nil, errors.New("arm dependency not configured; cannot jog")
@@ -554,19 +558,42 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 		return nil, errors.New("jog_cartesian requires a numeric 'step'")
 	}
 
+	var frame string
+	if frameVal, present := args["frame"]; present {
+		frame, ok = frameVal.(string)
+		if !ok {
+			return nil, errors.New("jog_cartesian 'frame' must be a string")
+		}
+	}
+
 	cur, err := pt.arm.EndPosition(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	R, err := pt.basisFor(frame, cur)
 	if err != nil {
 		return nil, err
 	}
 
 	var next spatialmath.Pose
 	switch axis {
-	case "x":
-		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{X: step}), cur.Orientation())
-	case "y":
-		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{Y: step}), cur.Orientation())
-	case "z":
-		next = spatialmath.NewPose(cur.Point().Add(r3.Vector{Z: step}), cur.Orientation())
+	case "x", "y", "z":
+		axisVec := r3.Vector{}
+		switch axis {
+		case "x":
+			axisVec.X = step
+		case "y":
+			axisVec.Y = step
+		case "z":
+			axisVec.Z = step
+		}
+		// Translate along the basis axis: rotate the local step vector into the
+		// world frame via R, then add it to the current world-frame point. With
+		// R=identity (world/default) this reduces to axisVec unchanged, matching
+		// the original world-frame translate.
+		worldVec := spatialmath.Compose(spatialmath.NewPoseFromOrientation(R), spatialmath.NewPoseFromPoint(axisVec)).Point()
+		next = spatialmath.NewPose(cur.Point().Add(worldVec), cur.Orientation())
 	case "roll", "pitch", "yaw":
 		rad := step * math.Pi / 180.0
 		var delta *spatialmath.EulerAngles
@@ -578,8 +605,27 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 		case "yaw":
 			delta = &spatialmath.EulerAngles{Yaw: rad}
 		}
-		// Tool-frame rotation: right-multiply current pose by the delta (zero translation preserves the point).
-		next = spatialmath.Compose(cur, spatialmath.NewPoseFromOrientation(delta))
+		if frame == "" {
+			// Default (no "frame" requested): preserve the ORIGINAL tool-frame
+			// rotation exactly -- right-multiply the delta onto the current pose
+			// (zero translation preserves the point). This keeps pre-existing
+			// jog_cartesian behavior byte-for-byte unchanged for callers that
+			// never pass "frame". Routing this case through the general
+			// R*delta*R^-1 conjugation below with R=identity would silently
+			// change this to a world-axis rotation instead -- a different
+			// operation (see TestJogCartesianWorldFrameRotationIsWorldAxis).
+			next = spatialmath.Compose(cur, spatialmath.NewPoseFromOrientation(delta))
+		} else {
+			// Rotate about the basis axis, independent of the current tool
+			// orientation: conjugate the delta into world terms (R*delta*R^-1)
+			// so it represents "delta about R's local axes" expressed in world
+			// coordinates, then apply it in front of (extrinsic to) cur.
+			deltaPose := spatialmath.NewPoseFromOrientation(delta)
+			Rpose := spatialmath.NewPoseFromOrientation(R)
+			wPose := spatialmath.Compose(spatialmath.Compose(Rpose, deltaPose), spatialmath.PoseInverse(Rpose))
+			nextOrient := spatialmath.Compose(wPose, spatialmath.NewPoseFromOrientation(cur.Orientation())).Orientation()
+			next = spatialmath.NewPose(cur.Point(), nextOrient)
+		}
 	default:
 		return nil, fmt.Errorf("unknown jog axis %q (want x|y|z|roll|pitch|yaw)", axis)
 	}
@@ -588,6 +634,28 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 		return nil, err
 	}
 	return map[string]interface{}{"pose": poseToMap(next), "moved": true}, nil
+}
+
+// basisFor resolves the jog basis orientation for the given frame name:
+// "" (absent) or "world" -> identity (the arm base/world frame); "tool" -> the
+// current TCP orientation (cur, from arm.EndPosition); anything else -> the
+// orientation of a taught frame with that name (its translation/origin is not
+// used -- jogging always pivots about the current TCP point, not the frame's
+// origin). Returns an error, without side effects, if the name does not match
+// any taught frame.
+func (pt *teachTracker) basisFor(frame string, cur spatialmath.Pose) (spatialmath.Orientation, error) {
+	switch frame {
+	case "", "world":
+		return spatialmath.NewZeroOrientation(), nil
+	case "tool":
+		return cur.Orientation(), nil
+	default:
+		pif, ok := pt.store.GetFrame(frame)
+		if !ok {
+			return nil, fmt.Errorf("unknown jog frame %q", frame)
+		}
+		return pif.Pose().Orientation(), nil
+	}
 }
 
 // moveToJoints moves the arm to an absolute joint configuration (degrees).
