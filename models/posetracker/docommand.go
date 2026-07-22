@@ -559,11 +559,13 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 	}
 
 	var frame string
+	var frameRequested bool
 	if frameVal, present := args["frame"]; present {
 		frame, ok = frameVal.(string)
 		if !ok {
 			return nil, errors.New("jog_cartesian 'frame' must be a string")
 		}
+		frameRequested = true
 	}
 
 	cur, err := pt.arm.EndPosition(ctx, nil)
@@ -605,10 +607,14 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 		case "yaw":
 			delta = &spatialmath.EulerAngles{Yaw: rad}
 		}
-		if frame == "" {
-			// Default (no "frame" requested): preserve the ORIGINAL tool-frame
-			// rotation exactly -- right-multiply the delta onto the current pose
-			// (zero translation preserves the point). This keeps pre-existing
+		if !frameRequested {
+			// Default (the "frame" key itself is absent -- decided here at
+			// arg-parse time via frameRequested, NOT by re-testing frame=="",
+			// since basisFor separately treats "" and "world" as the same
+			// identity basis and must remain free to do so without silently
+			// flipping this branch): preserve the ORIGINAL tool-frame rotation
+			// exactly -- right-multiply the delta onto the current pose (zero
+			// translation preserves the point). This keeps pre-existing
 			// jog_cartesian behavior byte-for-byte unchanged for callers that
 			// never pass "frame". Routing this case through the general
 			// R*delta*R^-1 conjugation below with R=identity would silently
