@@ -1509,6 +1509,26 @@ func TestMoveToJointsWrongCount(t *testing.T) {
 	test.That(t, called, test.ShouldBeFalse)
 }
 
+func TestMoveToJointsNonNumeric(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return []referenceframe.Input{0, 0, 0}, nil
+	}
+	called := false
+	injArm.MoveToJointPositionsFunc = func(_ context.Context, _ []referenceframe.Input, _ map[string]interface{}) error {
+		called = true
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_joints": map[string]interface{}{"positions": []interface{}{10.0, "bad", 30.0}},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, called, test.ShouldBeFalse)
+}
+
 func TestMoveToJointsNoArm(t *testing.T) {
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
@@ -1552,6 +1572,23 @@ func TestMoveToPoseNoArm(t *testing.T) {
 		}},
 	})
 	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestMoveToPosePartial(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	called := false
+	injArm.MoveToPositionFunc = func(_ context.Context, _ spatialmath.Pose, _ map[string]interface{}) error {
+		called = true
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{"pose": map[string]interface{}{"x": 100.0}},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, called, test.ShouldBeFalse)
 }
 
 func TestMoveToPoseBadPose(t *testing.T) {
