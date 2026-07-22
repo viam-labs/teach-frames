@@ -724,6 +724,9 @@ func TestGetArmState(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil) // arm not configured
 
 	injArm := inject.NewArm("my-arm")
+	// EndPosition (arm-base frame) is intentionally NOT what get_arm_state should
+	// report anymore -- it deliberately differs from the pt.source world pose
+	// below so a regression back to arm.EndPosition would be caught.
 	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
 		return spatialmath.NewPoseFromPoint(r3.Vector{X: 1, Y: 2, Z: 3}), nil
 	}
@@ -731,14 +734,60 @@ func TestGetArmState(t *testing.T) {
 		return []referenceframe.Input{0, math.Pi / 2}, nil
 	}
 	pt.arm = injArm
+	worldPose := spatialmath.NewPoseFromPoint(r3.Vector{X: 7, Y: 8, Z: 9})
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{worldPose}}
 
 	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
 	test.That(t, err, test.ShouldBeNil)
 	pose := resp["pose"].(map[string]interface{})
-	test.That(t, pose["x"], test.ShouldAlmostEqual, 1.0)
+	test.That(t, pose["x"], test.ShouldAlmostEqual, 7.0) // from pt.source (world), not arm.EndPosition
 	joints := resp["joints"].([]float64)
 	test.That(t, joints[0], test.ShouldAlmostEqual, 0.0)
 	test.That(t, joints[1], test.ShouldAlmostEqual, 90.0) // radians→degrees
+}
+
+// TestGetArmStateReportsWorldPose pins that get_arm_state's reported pose comes
+// from pt.source (destFrame/world), not arm.EndPosition (arm-base frame). On a
+// machine whose arm sits at the world origin these are numerically
+// indistinguishable, which is exactly how this bug shipped silently.
+func TestGetArmStateReportsWorldPose(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+
+	worldPose := spatialmath.NewPose(
+		r3.Vector{X: 111, Y: 222, Z: 333},
+		&spatialmath.OrientationVectorDegrees{OX: 0, OY: 1, OZ: 0, Theta: 45},
+	)
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{worldPose}}
+
+	injArm := inject.NewArm("my-arm")
+	// A distinct, implausible arm-base EndPosition: if the handler ever falls
+	// back to it, this test fails loudly instead of silently matching.
+	injArm.EndPositionFunc = func(context.Context, map[string]interface{}) (spatialmath.Pose, error) {
+		return spatialmath.NewPoseFromPoint(r3.Vector{X: -999, Y: -999, Z: -999}), nil
+	}
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return []referenceframe.Input{math.Pi / 4}, nil
+	}
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
+	test.That(t, err, test.ShouldBeNil)
+
+	pose := resp["pose"].(map[string]interface{})
+	test.That(t, pose, test.ShouldResemble, poseToMap(worldPose))
+
+	joints := resp["joints"].([]float64)
+	test.That(t, len(joints), test.ShouldEqual, 1)
+	test.That(t, joints[0], test.ShouldAlmostEqual, 45.0)
+}
+
+// TestGetArmStateNoArm keeps a dedicated no-arm-configured guard test (the
+// error path in TestGetArmState covers the same thing but this pins it in
+// isolation, matching the pattern used by the other DoCommand verbs).
+func TestGetArmStateNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{"get_arm_state": map[string]interface{}{}})
+	test.That(t, err, test.ShouldNotBeNil)
 }
 
 // --- stop_arm tests ---
@@ -817,8 +866,12 @@ func TestJogCartesianTranslation(t *testing.T) {
 	}
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	pt.arm = injArm
+	// Distinct from the move target (15,20,30) so a response that echoed the
+	// move target back (instead of re-reading pt.source post-move) would be caught.
+	worldPose := spatialmath.NewPoseFromPoint(r3.Vector{X: 999, Y: 888, Z: 777})
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{worldPose}}
 
-	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
 		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 5.0},
 	})
 	test.That(t, err, test.ShouldBeNil)
@@ -826,6 +879,11 @@ func TestJogCartesianTranslation(t *testing.T) {
 	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 20.0)
 	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 30.0)
 	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), startOri), test.ShouldBeTrue)
+
+	// The response pose must be sourced from pt.source (post-move world read),
+	// not the move target.
+	respPose := resp["pose"].(map[string]interface{})
+	test.That(t, respPose, test.ShouldResemble, poseToMap(worldPose))
 }
 
 func TestJogCartesianNoArm(t *testing.T) {
@@ -863,8 +921,10 @@ func TestJogCartesianRotationToolFrame(t *testing.T) {
 	}
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	pt.arm = injArm
+	worldPose := spatialmath.NewPoseFromPoint(r3.Vector{X: 42, Y: 43, Z: 44})
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{worldPose}}
 
-	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
 		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0},
 	})
 	test.That(t, err, test.ShouldBeNil)
@@ -878,6 +938,9 @@ func TestJogCartesianRotationToolFrame(t *testing.T) {
 	delta := spatialmath.NewPoseFromOrientation(&spatialmath.EulerAngles{Yaw: 30 * math.Pi / 180})
 	expected := spatialmath.Compose(spatialmath.NewPose(r3.Vector{X: 1, Y: 2, Z: 3}, startOri), delta)
 	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expected.Orientation()), test.ShouldBeTrue)
+
+	respPose := resp["pose"].(map[string]interface{})
+	test.That(t, respPose, test.ShouldResemble, poseToMap(worldPose))
 }
 
 // TestJogCartesianAllAxes covers every translation and rotation axis (x/y/z and
@@ -905,6 +968,7 @@ func TestJogCartesianAllAxes(t *testing.T) {
 			}
 			pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 			pt.arm = injArm
+			pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 
 			_, err := pt.DoCommand(context.Background(), map[string]interface{}{
 				"jog_cartesian": map[string]interface{}{"axis": axis, "step": step},
@@ -937,6 +1001,7 @@ func TestJogCartesianAllAxes(t *testing.T) {
 			}
 			pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 			pt.arm = injArm
+			pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 
 			_, err := pt.DoCommand(context.Background(), map[string]interface{}{
 				"jog_cartesian": map[string]interface{}{"axis": axis, "step": step},
@@ -991,6 +1056,7 @@ func TestJogCartesianWorldFrameMatchesDefault(t *testing.T) {
 		}
 		pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 		pt.arm = injArm
+		pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 		_, err := pt.DoCommand(context.Background(), map[string]interface{}{"jog_cartesian": args})
 		test.That(t, err, test.ShouldBeNil)
 		return moved
@@ -1027,6 +1093,7 @@ func TestJogCartesianWorldFrameRotationIsWorldAxis(t *testing.T) {
 	}
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	pt.arm = injArm
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
 		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0, "frame": "world"},
@@ -1061,6 +1128,7 @@ func TestJogCartesianToolFrameRotation(t *testing.T) {
 	}
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	pt.arm = injArm
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
 		"jog_cartesian": map[string]interface{}{"axis": "yaw", "step": 30.0, "frame": "tool"},
@@ -1098,6 +1166,7 @@ func TestJogCartesianTaughtFrameTranslation(t *testing.T) {
 		return nil
 	}
 	pt.arm = injArm
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
 		"jog_cartesian": map[string]interface{}{"axis": "x", "step": 10.0, "frame": "bracket"},
@@ -1131,6 +1200,7 @@ func TestJogCartesianTaughtFrameRotation(t *testing.T) {
 		return nil
 	}
 	pt.arm = injArm
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
 
 	const stepDeg = 40.0
 	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
@@ -1796,6 +1866,11 @@ func TestMoveToPose(t *testing.T) {
 	}
 	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
 	pt.arm = injArm
+	// Identity arm-base pose: world target == arm-base target, so this test
+	// doubles as the trivial (origin-base) no-op case.
+	pt.armInDest = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
+	worldResult := spatialmath.NewPoseFromPoint(r3.Vector{X: 500, Y: 600, Z: 700})
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{worldResult}}
 
 	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
 		"move_to_pose": map[string]interface{}{"pose": map[string]interface{}{
@@ -1810,6 +1885,101 @@ func TestMoveToPose(t *testing.T) {
 	expectedOV := &spatialmath.OrientationVectorDegrees{OZ: 1}
 	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expectedOV), test.ShouldBeTrue)
 	test.That(t, resp["moved"], test.ShouldBeTrue)
+
+	// The response pose is sourced from pt.source (post-move world read), not
+	// echoed back from the move target.
+	respPose := resp["pose"].(map[string]interface{})
+	test.That(t, respPose, test.ShouldResemble, poseToMap(worldResult))
+}
+
+// TestMoveToPoseConvertsWorldTargetToArmBase verifies move_to_pose's "pose"
+// argument is interpreted in the destination (world) frame and converted to
+// the arm-base frame before being handed to arm.MoveToPosition: armBaseTarget
+// = inverse(armInDest) ∘ worldTarget. armInDest is deliberately non-identity
+// (translated AND rotated) so a bug that skipped the conversion (or only
+// handled translation) would be caught.
+func TestMoveToPoseConvertsWorldTargetToArmBase(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	// Non-identity arm-base pose (in world/destFrame): translated and rotated.
+	armBaseInWorld := spatialmath.NewPose(
+		r3.Vector{X: 100, Y: 50, Z: 20},
+		&spatialmath.OrientationVectorDegrees{OZ: 1, Theta: 90},
+	)
+	pt.armInDest = &posesource.Fake{Poses: []spatialmath.Pose{armBaseInWorld}}
+
+	worldResult := spatialmath.NewPoseFromPoint(r3.Vector{X: -1, Y: -2, Z: -3})
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{worldResult}}
+
+	worldTarget := spatialmath.NewPose(
+		r3.Vector{X: 300, Y: 400, Z: 500},
+		&spatialmath.OrientationVectorDegrees{OX: 0, OY: 1, OZ: 0, Theta: 30},
+	)
+	poseArg := poseToMap(worldTarget)
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{"pose": poseArg},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved, test.ShouldNotBeNil)
+
+	expectedArmBaseTarget := spatialmath.Compose(spatialmath.PoseInverse(armBaseInWorld), worldTarget)
+	test.That(t, spatialmath.PoseAlmostEqual(moved, expectedArmBaseTarget), test.ShouldBeTrue)
+
+	respPose := resp["pose"].(map[string]interface{})
+	test.That(t, respPose, test.ShouldResemble, poseToMap(worldResult))
+}
+
+// TestMoveToPoseIdentityBaseNoOp verifies that when the arm base sits at the
+// destFrame origin (armInDest == identity), the world target and the arm-base
+// target are numerically identical -- i.e. this change is a no-op for
+// origin-arm-base cells.
+func TestMoveToPoseIdentityBaseNoOp(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+	pt.armInDest = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
+	pt.source = &posesource.Fake{Poses: []spatialmath.Pose{spatialmath.NewZeroPose()}}
+
+	worldTarget := spatialmath.NewPose(
+		r3.Vector{X: 10, Y: 20, Z: 30},
+		&spatialmath.OrientationVectorDegrees{OX: 0.2, OY: 0.3, OZ: 1, Theta: 45},
+	)
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{"pose": poseToMap(worldTarget)},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, spatialmath.PoseAlmostEqual(moved, worldTarget), test.ShouldBeTrue)
+}
+
+// TestMoveToPoseArmInDestNotConfigured verifies the defensive armInDest-nil
+// guard: an arm can be assigned directly in a test (bypassing the
+// constructor's wiring) without armInDest ever being set, and this must error
+// rather than panic or silently skip the frame conversion.
+func TestMoveToPoseArmInDestNotConfigured(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = inject.NewArm("my-arm")
+	pt.armInDest = nil
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{"pose": map[string]interface{}{
+			"x": 0.0, "y": 0.0, "z": 0.0, "o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 0.0,
+		}},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
 }
 
 func TestMoveToPoseNoArm(t *testing.T) {

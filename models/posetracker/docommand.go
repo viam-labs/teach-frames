@@ -29,12 +29,12 @@ import (
 //	{"clear_frames": {}}                                     — remove all committed frames and persist the empty set.
 //	{"teach_tcp_position": {}}                               — solve the pivot over the TCP buffer, persist the tool tip as the tcp_component's frame translation, and clear the TCP buffer.
 //	{"teach_tcp_orientation": {"o_x": 0, "o_y": 0, "o_z": 1, "theta": 0}} — persist an explicit tool orientation (OV degrees) to the tcp_component's frame, leaving the taught translation intact. Run after teach_tcp_position, since it writes orientation only and does not re-derive the translation.
-//	{"get_arm_state": {}}                                    — return the current TCP pose and joint positions (degrees) in one call, for the UI poll loop (errors if no arm is configured).
+//	{"get_arm_state": {}}                                    — return the current TCP pose (reported in the destination/world frame) and joint positions (degrees) in one call, for the UI poll loop (errors if no arm is configured).
 //	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
 //	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
-//	{"jog_cartesian": {"axis": "x", "step": 5, "frame": "world"}} — nudge the TCP by a signed step: x/y/z (mm) translate, roll/pitch/yaw (degrees) rotate, both resolved in the chosen basis ("world"|"tool"|<taught frame name>, default "world"). "tool" uses the current TCP orientation; a taught frame name uses that frame's orientation (its own translation/origin is NOT used -- the jog is always centered on the current TCP point). NOTE: when "frame" is omitted, rotation preserves the original tool-frame (right-multiply) behavior for backward compatibility; an explicit "world" performs a true world-axis rotation, which is not the same operation (errors if no arm is configured, the axis is unknown, or "frame" names an unrecognized taught frame).
+//	{"jog_cartesian": {"axis": "x", "step": 5, "frame": "world"}} — nudge the TCP by a signed step: x/y/z (mm) translate, roll/pitch/yaw (degrees) rotate, both resolved in the chosen basis ("world"|"tool"|<taught frame name>, default "world"). "tool" uses the current TCP orientation; a taught frame name uses that frame's orientation (its own translation/origin is NOT used -- the jog is always centered on the current TCP point). NOTE: when "frame" is omitted, rotation preserves the original tool-frame (right-multiply) behavior for backward compatibility; an explicit "world" performs a true world-axis rotation, which is not the same operation (errors if no arm is configured, the axis is unknown, or "frame" names an unrecognized taught frame). The move computation itself is always in the arm base frame; only the REPORTED pose is in the destination/world frame.
 //	{"move_to_joints": {"positions": [deg,…]}}               — move the arm to an absolute joint configuration (degrees); errors if no arm or the count mismatches the arm's joints.
-//	{"move_to_pose": {"pose": {"x":0,"y":0,"z":0,"o_x":0,"o_y":0,"o_z":1,"theta":0}}} — move the TCP to an absolute pose (mm + OV degrees) in the arm base frame; errors if no arm.
+//	{"move_to_pose": {"pose": {"x":0,"y":0,"z":0,"o_x":0,"o_y":0,"o_z":1,"theta":0}}} — move the TCP to an absolute pose (mm + OV degrees) in the destination/world frame (converted internally to the arm base frame before the move); errors if no arm.
 //	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics (and, in eye_in_hand mode, the current flange pose) for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured, or if eye_in_hand mode cannot resolve the arm).
 //	{"capture_handeye_point": {"u": 0, "v": 0}}              — eye_to_hand only: deproject the clicked pixel against the cached snapshot, read the current TCP world pose, and store the (world, camera) pair (errors if no camera is configured, no snapshot is cached, u/v are missing/non-numeric, the pixel has no valid depth, or camera_mount is eye_in_hand).
 //	{"get_handeye_mode": {}}                                 — return the configured camera_mount and whether the camera/arm dependencies resolved, for UI gating.
@@ -480,12 +480,13 @@ func keysOf(m map[string]interface{}) []string {
 	return ks
 }
 
-// getArmState returns the current TCP pose and joint positions (degrees) for the UI.
+// getArmState returns the current TCP pose (in the destination/world frame,
+// via pt.source) and joint positions (degrees) for the UI.
 func (pt *teachTracker) getArmState(ctx context.Context) (map[string]interface{}, error) {
 	if pt.arm == nil {
 		return nil, errors.New("arm dependency not configured; cannot read arm state")
 	}
-	pose, err := pt.arm.EndPosition(ctx, nil)
+	pif, err := pt.source.Capture(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +495,7 @@ func (pt *teachTracker) getArmState(ctx context.Context) (map[string]interface{}
 		return nil, err
 	}
 	return map[string]interface{}{
-		"pose":   poseToMap(pose),
+		"pose":   poseToMap(pif.Pose()),
 		"joints": inputsToDegrees(joints),
 	}, nil
 }
@@ -639,7 +640,15 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 	if err := pt.arm.MoveToPosition(ctx, next, nil); err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"pose": poseToMap(next), "moved": true}, nil
+
+	// Report the post-move pose in the destination (world) frame via pt.source,
+	// not the arm-base move target computed above -- the move computation itself
+	// is unchanged, only what we report back to the caller.
+	worldPIF, err := pt.source.Capture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"pose": poseToMap(worldPIF.Pose()), "moved": true}, nil
 }
 
 // basisFor resolves the jog basis orientation for the given frame name:
@@ -702,8 +711,12 @@ func (pt *teachTracker) moveToJoints(ctx context.Context, raw interface{}) (map[
 }
 
 // moveToPose moves the arm's TCP to an absolute pose (mm + OrientationVector
-// degrees) in the arm base frame -- the same frame get_arm_state/EndPosition
-// reports, so the operator edits the values they see.
+// degrees) in the destination (world) frame -- the same frame get_arm_state
+// reports, so the operator edits the values they see. The world target is
+// converted to the arm's own base frame (armBaseTarget = inverse(armInDest) ∘
+// worldTarget) before being handed to arm.MoveToPosition, which still expects
+// an arm-base-frame pose; this conversion is a no-op when the arm base sits at
+// the destFrame origin.
 func (pt *teachTracker) moveToPose(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
 	if pt.arm == nil {
 		return nil, errors.New("arm dependency not configured; cannot move")
@@ -753,15 +766,29 @@ func (pt *teachTracker) moveToPose(ctx context.Context, raw interface{}) (map[st
 		return nil, err
 	}
 
-	next := spatialmath.NewPose(
+	worldTarget := spatialmath.NewPose(
 		r3.Vector{X: x, Y: y, Z: z},
 		&spatialmath.OrientationVectorDegrees{OX: ox, OY: oy, OZ: oz, Theta: theta},
 	)
 
-	if err := pt.arm.MoveToPosition(ctx, next, nil); err != nil {
+	if pt.armInDest == nil {
+		return nil, errors.New("arm dependency not configured; cannot move")
+	}
+	basePIF, err := pt.armInDest.Capture(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"pose": poseToMap(next), "moved": true}, nil
+	armBaseTarget := spatialmath.Compose(spatialmath.PoseInverse(basePIF.Pose()), worldTarget)
+
+	if err := pt.arm.MoveToPosition(ctx, armBaseTarget, nil); err != nil {
+		return nil, err
+	}
+
+	worldPIF, err := pt.source.Capture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"pose": poseToMap(worldPIF.Pose()), "moved": true}, nil
 }
 
 // inputsToDegrees converts joint inputs (radians) to a plain []float64 in degrees.
