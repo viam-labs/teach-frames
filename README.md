@@ -44,6 +44,8 @@ Read-only mirror that syncs the pose-tracker's frame set into the Viam visualiza
 
 The service declares `pose_tracker` as a required dependency. When the pose-tracker is rebuilt (e.g. after `define_frame` persists a new frame), the visualizer reconnects and refreshes via `ListUUIDs`/`GetTransform`.
 
+> **Known issue and stopgap.** The `world_state_store` mirror's WSS stream to the Viam visualizer/frontend goes permanently stale after the pose-tracker's first `AlwaysRebuild` reconfigure (see `docs/plans/2026-07-20-motion-tools-wss-reconfigure-upstream-patch.md` for the root cause), so deletions and edits to taught frames stop reaching an already-connected client. The `teach-pendant` frontend in this repo works around this by remounting the `<Visualizer>` after a define/delete/clear made through its own UI, which forces a fresh `world_state_store` snapshot. Two known costs: (1) a brief scene refresh on those actions — camera and floating-panel positions may reset, and the Manage Frames panel closes; and (2) **direct edits to the pose-tracker config made outside this UI still require a manual page reload** to show up, until the upstream fix lands.
+
 ## Teaching workflow: DoCommand reference
 
 All DoCommands are sent to the **pose-tracker** component. Each command is a single-key map.
@@ -63,7 +65,7 @@ All DoCommands are sent to the **pose-tracker** component. Each command is a sin
 | `get_tcp_buffer` | `{}` | Returns all poses currently in the TCP capture buffer. | `points` (array of pose maps) |
 | `clear_tcp_buffer` | `{}` | Empties the TCP capture buffer. | `cleared` (count removed) |
 | `get_arm_state` | `{}` | Reads the current TCP pose and joint positions in a single call (for a UI poll loop). Errors if no `arm` is configured. | `pose` (x/y/z/o_x/o_y/o_z/theta), `joints` (array of degrees) |
-| `jog_cartesian` | `{"axis": "x"\|"y"\|"z"\|"roll"\|"pitch"\|"yaw", "step": <mm-or-deg>}` | Nudges the TCP by a signed step: `x`/`y`/`z` translate along the **world** frame (mm); `roll`/`pitch`/`yaw` rotate about the **tool** frame (degrees). Reads `EndPosition`, applies the delta, and calls `MoveToPosition`. Errors if no `arm` is configured or the axis is unknown. | `pose` (resulting TCP pose), `moved` (bool) |
+| `jog_cartesian` | `{"axis": "x"\|"y"\|"z"\|"roll"\|"pitch"\|"yaw", "step": <mm-or-deg>, "frame": <optional>}` | Nudges the TCP by a signed step along/about the axes of `frame` (`"world"`, `"tool"`, or a taught frame name). Omitting `frame` is back-compat: translation along **world** axes, rotation about **tool** axes. See [Jogging](#jogging) below for the full frame convention. Reads `EndPosition`, applies the delta, and calls `MoveToPosition`. Errors if no `arm` is configured or the axis is unknown. | `pose` (resulting TCP pose), `moved` (bool) |
 | `jog_joint` | `{"joint": <index>, "step": <deg>}` | Nudges a single joint by a signed step (degrees) and calls `MoveToJointPositions`. Errors if no `arm` is configured or the joint index is out of range. | `joints` (resulting positions, degrees) |
 | `stop_arm` | `{}` | Stops arm motion immediately (`arm.Stop`). Errors if no `arm` is configured. | `stopped` (bool) |
 | `handeye_snapshot` | `{}` | Acquires an RGBD frame from the configured `camera` and caches the depth map + intrinsics for the next capture; in `eye_in_hand` mode, also reads and caches the current flange pose in the same call, so the pixels and the flange pose that produced them stay paired. Returns the color image as a base64 JPEG. Errors if no `camera` is configured, or (`eye_in_hand` only) if the `arm` dependency isn't configured/resolvable. | `image` (base64 JPEG string), `width`, `height` |
@@ -101,13 +103,26 @@ configured" error.
 
 Jogging is **discrete**: each command applies exactly one signed step and blocks
 until the move completes; the `step` value carries its own sign (send a negative
-`step` to move the opposite direction). The frame convention is **world-frame
-translation, tool-frame rotation**:
+`step` to move the opposite direction).
 
-- `jog_cartesian` `x`/`y`/`z` translate the TCP along the world/base axes (mm).
-- `jog_cartesian` `roll`/`pitch`/`yaw` rotate about the TCP's own axes (degrees),
-  composed via quaternion math so the orientation stays well-formed.
-- `jog_joint` nudges one joint by a signed angle (degrees).
+`jog_cartesian` takes an optional `frame` param selecting the jog basis:
+
+- Omitted → back-compat: `x`/`y`/`z` translate along the world/base axes (mm);
+  `roll`/`pitch`/`yaw` rotate about the tool/TCP's own axes (degrees).
+- `"world"` → translate **and** rotate about the world/arm-base axes.
+- `"tool"` → translate **and** rotate about the tool/TCP axes.
+- A taught frame name → translate **and** rotate along/about that frame's axes
+  (assumes the arm base is at/near the world origin — a known limitation
+  tracked as the "constraint-G" backlog item, not specific to jogging).
+
+All rotation is composed via quaternion math so the orientation stays
+well-formed. `jog_joint` nudges one joint by a signed angle (degrees), and is
+unaffected by `frame`.
+
+The teach-pendant UI's Cartesian jog panel exposes this as a **Reference**
+selector (World / Tool / any taught frame), defaulting to **World** — so out
+of the box, roll/pitch/yaw rotate about the world/base axes; pick **Tool** to
+get the old tool-relative rotation.
 
 The arm's own joint/reachability limits remain the safety authority — an
 unreachable or out-of-limit jog surfaces as the underlying `MoveToPosition` /
@@ -118,6 +133,12 @@ unreachable or out-of-limit jog surfaces as the underlying `MoveToPosition` /
 ```json
 {"jog_cartesian": {"axis": "x", "step": 5}}
 {"jog_cartesian": {"axis": "yaw", "step": -10}}
+```
+
+**Example — jog relative to a taught frame:**
+
+```json
+{"jog_cartesian": {"axis": "x", "step": 5, "frame": "fixture_a"}}
 ```
 
 ### TCP teaching
