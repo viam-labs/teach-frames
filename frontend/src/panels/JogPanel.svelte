@@ -28,8 +28,10 @@
 
   // Stop is its own mutation so it stays callable — and immediately in-flight —
   // even while a jog/move is pending. It is never gated by motion.busy. Mirrors
-  // StatusBar.svelte's handleStop, duplicated here since the global shell has
-  // no stop control of its own.
+  // StatusBar.svelte's handleStop; rendered into the dashboard toolbar below
+  // since the global shell (StatusBar isn't mounted here) has no stop control
+  // of its own — this IS that control, always visible regardless of whether
+  // the Jog panel itself is open.
   const stop = createResourceMutation(pt, 'doCommand')
 
   function handleStop() {
@@ -95,9 +97,16 @@
   function loadCurrent() {
     if (moveKind === 'pose' && armState.pose) {
       targetPose = { ...armState.pose }
-    } else {
+    } else if (moveKind === 'joints') {
       targetJoints = [...armState.joints]
     }
+    moveConfirm = false
+  }
+
+  // Dropping back to the edit step whenever the reviewed target could have
+  // changed (kind switch or any field edit) — so the confirm bar can never
+  // reflect a target other than the exact one the operator just reviewed.
+  function resetConfirm() {
     moveConfirm = false
   }
 
@@ -108,7 +117,10 @@
   const canReview = $derived(moveKind === 'pose' ? poseValid : jointsValid)
 
   async function handleExecute() {
-    if (moveM.isPending || motion.busy > 0) {
+    // Defense in depth: mirrors the Execute button's `disabled` guard so a
+    // stale/incorrect target (e.g. an empty joints array) can never reach
+    // the arm even if this is invoked some other way.
+    if (moveM.isPending || motion.busy > 0 || !canReview) {
       return
     }
     try {
@@ -281,6 +293,23 @@
   </DashboardToggle>
 </DashboardPortal>
 
+<!-- Global STOP, rendered into the always-visible dashboard toolbar (not
+     inside the FloatingPanel body) so it stays reachable even when the Jog
+     panel is collapsed — the shell has no other stop control (StatusBar
+     isn't mounted here). Never gated on motion.busy/armState.hasArm; only
+     disabled while the stop command itself is in flight. -->
+<DashboardPortal>
+  <button
+    type="button"
+    class="bg-danger-dark min-h-9 rounded-md border border-danger-dark px-3 text-xs font-bold tracking-wide text-white uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-danger-dark/40 disabled:cursor-not-allowed disabled:opacity-60"
+    onclick={handleStop}
+    disabled={stop.isPending}
+    aria-label="Stop arm"
+  >
+    {stop.isPending ? 'Stopping…' : 'STOP'}
+  </button>
+</DashboardPortal>
+
 <FloatingPanel
   title="Jog"
   bind:isOpen={open}
@@ -289,20 +318,9 @@
   resizable
 >
   <div class="flex h-full flex-col gap-3 overflow-y-auto p-4">
-    <div class="flex flex-col gap-1">
-      <button
-        type="button"
-        class="bg-danger-dark min-h-11 rounded-md border border-danger-dark font-medium text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-danger-dark/40 disabled:cursor-not-allowed disabled:opacity-60"
-        onclick={handleStop}
-        disabled={stop.isPending}
-        aria-label="Stop arm"
-      >
-        {stop.isPending ? 'Stopping…' : 'STOP'}
-      </button>
-      {#if stop.error}
-        <p class="text-danger-dark text-xs" role="alert">{stop.error.message}</p>
-      {/if}
-    </div>
+    {#if stop.error}
+      <p class="text-danger-dark text-xs" role="alert">{stop.error.message}</p>
+    {/if}
 
     <div class="flex items-start justify-between gap-2">
       <p class="text-subtle-1 text-xs">Move the arm to position it for capture.</p>
@@ -392,10 +410,10 @@
         {:else}
           <div class="flex flex-col gap-3">
             <div class="flex flex-wrap gap-2" role="group" aria-label="Move-to kind">
-              <button type="button" class={`${toggleBase} ${moveKind === 'pose' ? toggleActive : toggleInactive}`} onclick={() => (moveKind = 'pose')}>
+              <button type="button" class={`${toggleBase} ${moveKind === 'pose' ? toggleActive : toggleInactive}`} onclick={() => { moveKind = 'pose'; resetConfirm() }}>
                 Pose
               </button>
-              <button type="button" class={`${toggleBase} ${moveKind === 'joints' ? toggleActive : toggleInactive}`} onclick={() => (moveKind = 'joints')}>
+              <button type="button" class={`${toggleBase} ${moveKind === 'joints' ? toggleActive : toggleInactive}`} onclick={() => { moveKind = 'joints'; resetConfirm() }}>
                 Joints
               </button>
             </div>
@@ -406,31 +424,31 @@
               <div class="grid grid-cols-2 gap-2">
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">X (mm)</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.x} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.x} oninput={resetConfirm} />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">Y (mm)</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.y} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.y} oninput={resetConfirm} />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">Z (mm)</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.z} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.z} oninput={resetConfirm} />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">OX</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_x} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_x} oninput={resetConfirm} />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">OY</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_y} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_y} oninput={resetConfirm} />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">OZ</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_z} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_z} oninput={resetConfirm} />
                 </label>
                 <label class="flex flex-col gap-1 text-xs">
                   <span class="text-subtle-2">&#952; (deg)</span>
-                  <input type="number" step="any" class={inputClass} bind:value={targetPose.theta} />
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.theta} oninput={resetConfirm} />
                 </label>
               </div>
             {:else if targetJoints.length === 0}
@@ -440,7 +458,7 @@
                 {#each targetJoints as _joint, i (i)}
                   <label class="flex flex-col gap-1 text-xs">
                     <span class="text-subtle-2">J{i}</span>
-                    <input type="number" step="any" class={inputClass} bind:value={targetJoints[i]} />
+                    <input type="number" step="any" class={inputClass} bind:value={targetJoints[i]} oninput={resetConfirm} />
                   </label>
                 {/each}
               </div>
@@ -466,7 +484,7 @@
                   <button
                     type="button"
                     class={dangerButtonClass}
-                    disabled={moveM.isPending || motion.busy > 0}
+                    disabled={moveM.isPending || motion.busy > 0 || !canReview}
                     onclick={handleExecute}
                   >
                     {moveM.isPending ? 'Moving…' : 'Execute'}
