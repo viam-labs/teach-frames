@@ -28,6 +28,8 @@ import {
   captureHandeyeTarget,
   captureHandeyeView,
   getHandeyeMode,
+  moveToJoints,
+  moveToPose,
 } from './poseTracker'
 
 describe('DoCommand payload builders', () => {
@@ -101,6 +103,15 @@ describe('DoCommand payload builders', () => {
     expect(teachTcpOrientation(0, 0, 1, 90)).toEqual({
       teach_tcp_orientation: { o_x: 0, o_y: 0, o_z: 1, theta: 90 },
     })
+  })
+
+  it('moveToJoints builds the command', () => {
+    expect(moveToJoints([90, 0, 45])).toEqual({ move_to_joints: { positions: [90, 0, 45] } })
+  })
+
+  it('moveToPose builds the command', () => {
+    const p = { x: 1, y: 2, z: 3, o_x: 0, o_y: 0, o_z: 1, theta: 0 }
+    expect(moveToPose(p)).toEqual({ move_to_pose: { pose: p } })
   })
 })
 

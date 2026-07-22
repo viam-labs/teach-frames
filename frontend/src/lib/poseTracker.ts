@@ -38,6 +38,8 @@ export const teachTcpPosition = () => ({ teach_tcp_position: {} })
 export const teachTcpOrientation = (o_x: number, o_y: number, o_z: number, theta: number) => ({
   teach_tcp_orientation: { o_x, o_y, o_z, theta },
 })
+export const moveToJoints = (positions: number[]) => ({ move_to_joints: { positions } })
+export const moveToPose = (pose: PoseMap) => ({ move_to_pose: { pose } })
 
 // Converts a plain-object DoCommand payload (as produced by the builders
 // above) into the `Struct` that `PoseTrackerClient.doCommand` requires.
@@ -118,6 +120,16 @@ export interface TeachTcpPositionResponse {
 export interface TeachTcpOrientationResponse {
   committed: boolean
   orientation: { o_x: number; o_y: number; o_z: number; theta: number }
+}
+
+export interface MoveToJointsResponse {
+  joints: number[]
+  moved: boolean
+}
+
+export interface MoveToPoseResponse {
+  pose: PoseMap
+  moved: boolean
 }
 
 // Hand-eye calibration DoCommands (see models/posetracker/handeye.go for the
