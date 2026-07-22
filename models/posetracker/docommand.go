@@ -33,6 +33,8 @@ import (
 //	{"stop_arm": {}}                                          — stop arm motion immediately (errors if no arm is configured).
 //	{"jog_joint": {"joint": 0, "step": 5}}                    — nudge a single joint by a signed step (degrees) and move the arm there (errors if no arm is configured or the joint index is out of range).
 //	{"jog_cartesian": {"axis": "x", "step": 5}}               — nudge the TCP by a signed step: x/y/z (mm) translate along the world frame, roll/pitch/yaw (degrees) rotate about the tool frame (errors if no arm is configured or the axis is unknown).
+//	{"move_to_joints": {"positions": [deg,…]}}               — move the arm to an absolute joint configuration (degrees); errors if no arm or the count mismatches the arm's joints.
+//	{"move_to_pose": {"pose": {"x":0,"y":0,"z":0,"o_x":0,"o_y":0,"o_z":1,"theta":0}}} — move the TCP to an absolute pose (mm + OV degrees) in the arm base frame; errors if no arm.
 //	{"handeye_snapshot": {}}                                 — acquire an RGBD frame from the configured camera, cache the depth+intrinsics (and, in eye_in_hand mode, the current flange pose) for the next capture, and return a base64 JPEG of the color image plus its width/height (errors if no camera is configured, or if eye_in_hand mode cannot resolve the arm).
 //	{"capture_handeye_point": {"u": 0, "v": 0}}              — eye_to_hand only: deproject the clicked pixel against the cached snapshot, read the current TCP world pose, and store the (world, camera) pair (errors if no camera is configured, no snapshot is cached, u/v are missing/non-numeric, the pixel has no valid depth, or camera_mount is eye_in_hand).
 //	{"get_handeye_mode": {}}                                 — return the configured camera_mount and whether the camera/arm dependencies resolved, for UI gating.
@@ -135,6 +137,12 @@ func (pt *teachTracker) DoCommand(ctx context.Context, cmd map[string]interface{
 
 	case has(cmd, "jog_cartesian"):
 		return pt.jogCartesian(ctx, cmd["jog_cartesian"])
+
+	case has(cmd, "move_to_joints"):
+		return pt.moveToJoints(ctx, cmd["move_to_joints"])
+
+	case has(cmd, "move_to_pose"):
+		return pt.moveToPose(ctx, cmd["move_to_pose"])
 
 	case has(cmd, "handeye_snapshot"):
 		return pt.handeyeSnapshot(ctx)
@@ -575,6 +583,106 @@ func (pt *teachTracker) jogCartesian(ctx context.Context, raw interface{}) (map[
 	default:
 		return nil, fmt.Errorf("unknown jog axis %q (want x|y|z|roll|pitch|yaw)", axis)
 	}
+
+	if err := pt.arm.MoveToPosition(ctx, next, nil); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"pose": poseToMap(next), "moved": true}, nil
+}
+
+// moveToJoints moves the arm to an absolute joint configuration (degrees).
+func (pt *teachTracker) moveToJoints(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot move")
+	}
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("move_to_joints args must be an object")
+	}
+	rawPositions, ok := args["positions"].([]interface{})
+	if !ok {
+		return nil, errors.New("move_to_joints requires a 'positions' array (degrees)")
+	}
+
+	cur, err := pt.arm.JointPositions(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if len(rawPositions) != len(cur) {
+		return nil, fmt.Errorf("move_to_joints expects %d joint positions, got %d", len(cur), len(rawPositions))
+	}
+
+	next := make([]referenceframe.Input, len(rawPositions))
+	for i, p := range rawPositions {
+		deg, ok := p.(float64)
+		if !ok {
+			return nil, fmt.Errorf("move_to_joints position %d is not numeric", i)
+		}
+		next[i] = referenceframe.Input(deg * math.Pi / 180.0)
+	}
+
+	if err := pt.arm.MoveToJointPositions(ctx, next, nil); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"joints": inputsToDegrees(next), "moved": true}, nil
+}
+
+// moveToPose moves the arm's TCP to an absolute pose (mm + OrientationVector
+// degrees) in the arm base frame -- the same frame get_arm_state/EndPosition
+// reports, so the operator edits the values they see.
+func (pt *teachTracker) moveToPose(ctx context.Context, raw interface{}) (map[string]interface{}, error) {
+	if pt.arm == nil {
+		return nil, errors.New("arm dependency not configured; cannot move")
+	}
+	args, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("move_to_pose args must be an object")
+	}
+	poseArg, ok := args["pose"].(map[string]interface{})
+	if !ok {
+		return nil, errors.New("move_to_pose requires a 'pose' object")
+	}
+
+	num := func(k string) (float64, error) {
+		v, ok := poseArg[k].(float64)
+		if !ok {
+			return 0, fmt.Errorf("move_to_pose pose.%s is not numeric", k)
+		}
+		return v, nil
+	}
+	x, err := num("x")
+	if err != nil {
+		return nil, err
+	}
+	y, err := num("y")
+	if err != nil {
+		return nil, err
+	}
+	z, err := num("z")
+	if err != nil {
+		return nil, err
+	}
+	ox, err := num("o_x")
+	if err != nil {
+		return nil, err
+	}
+	oy, err := num("o_y")
+	if err != nil {
+		return nil, err
+	}
+	oz, err := num("o_z")
+	if err != nil {
+		return nil, err
+	}
+	theta, err := num("theta")
+	if err != nil {
+		return nil, err
+	}
+
+	next := spatialmath.NewPose(
+		r3.Vector{X: x, Y: y, Z: z},
+		&spatialmath.OrientationVectorDegrees{OX: ox, OY: oy, OZ: oz, Theta: theta},
+	)
 
 	if err := pt.arm.MoveToPosition(ctx, next, nil); err != nil {
 		return nil, err

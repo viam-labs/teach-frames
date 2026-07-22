@@ -1458,3 +1458,108 @@ func TestSolveHandEyeEyeInHandRequiresArm(t *testing.T) {
 	test.That(t, err, test.ShouldNotBeNil)
 	test.That(t, err.Error(), test.ShouldContainSubstring, "arm not configured")
 }
+
+// --- move_to_joints tests ---
+
+func TestMoveToJoints(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return []referenceframe.Input{0, 0, 0}, nil
+	}
+	var moved []referenceframe.Input
+	injArm.MoveToJointPositionsFunc = func(_ context.Context, p []referenceframe.Input, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_joints": map[string]interface{}{"positions": []interface{}{90.0, 0.0, 45.0}},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved, test.ShouldNotBeNil)
+	test.That(t, moved[0], test.ShouldAlmostEqual, math.Pi/2)
+	test.That(t, moved[1], test.ShouldAlmostEqual, 0.0)
+	test.That(t, moved[2], test.ShouldAlmostEqual, math.Pi/4)
+	test.That(t, resp["moved"], test.ShouldBeTrue)
+	joints := resp["joints"].([]float64)
+	test.That(t, joints[0], test.ShouldAlmostEqual, 90.0)
+	test.That(t, joints[1], test.ShouldAlmostEqual, 0.0)
+	test.That(t, joints[2], test.ShouldAlmostEqual, 45.0)
+}
+
+func TestMoveToJointsWrongCount(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	injArm.JointPositionsFunc = func(context.Context, map[string]interface{}) ([]referenceframe.Input, error) {
+		return []referenceframe.Input{0, 0, 0}, nil
+	}
+	called := false
+	injArm.MoveToJointPositionsFunc = func(_ context.Context, _ []referenceframe.Input, _ map[string]interface{}) error {
+		called = true
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_joints": map[string]interface{}{"positions": []interface{}{10.0, 20.0}},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+	test.That(t, called, test.ShouldBeFalse)
+}
+
+func TestMoveToJointsNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_joints": map[string]interface{}{"positions": []interface{}{0.0}},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+// --- move_to_pose tests ---
+
+func TestMoveToPose(t *testing.T) {
+	injArm := inject.NewArm("my-arm")
+	var moved spatialmath.Pose
+	injArm.MoveToPositionFunc = func(_ context.Context, p spatialmath.Pose, _ map[string]interface{}) error {
+		moved = p
+		return nil
+	}
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = injArm
+
+	resp, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{"pose": map[string]interface{}{
+			"x": 100.0, "y": 0.0, "z": 200.0, "o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 0.0,
+		}},
+	})
+	test.That(t, err, test.ShouldBeNil)
+	test.That(t, moved, test.ShouldNotBeNil)
+	test.That(t, moved.Point().X, test.ShouldAlmostEqual, 100.0)
+	test.That(t, moved.Point().Y, test.ShouldAlmostEqual, 0.0)
+	test.That(t, moved.Point().Z, test.ShouldAlmostEqual, 200.0)
+	expectedOV := &spatialmath.OrientationVectorDegrees{OZ: 1}
+	test.That(t, spatialmath.OrientationAlmostEqual(moved.Orientation(), expectedOV), test.ShouldBeTrue)
+	test.That(t, resp["moved"], test.ShouldBeTrue)
+}
+
+func TestMoveToPoseNoArm(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{"pose": map[string]interface{}{
+			"x": 0.0, "y": 0.0, "z": 0.0, "o_x": 0.0, "o_y": 0.0, "o_z": 1.0, "theta": 0.0,
+		}},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
+
+func TestMoveToPoseBadPose(t *testing.T) {
+	pt := newForTest(t, &Config{MotionService: "builtin", TCPComponent: "arm"})
+	pt.arm = inject.NewArm("my-arm")
+
+	_, err := pt.DoCommand(context.Background(), map[string]interface{}{
+		"move_to_pose": map[string]interface{}{},
+	})
+	test.That(t, err, test.ShouldNotBeNil)
+}
