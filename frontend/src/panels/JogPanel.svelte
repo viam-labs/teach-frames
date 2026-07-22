@@ -8,12 +8,15 @@
   import { selectedResource } from '../lib/resource.svelte'
   import { useMachineId } from '../lib/machine'
   import { armState } from '../lib/armState.svelte'
-  import { motion, withMove } from '../lib/motion.svelte'
+  import { motion, withMove, requestStop } from '../lib/motion.svelte'
   import {
     getArmState,
     jogCartesian,
     jogJoint,
+    moveToJoints,
+    moveToPose,
     parseArmState,
+    stopArm,
     toCommandArgs,
     type CartesianAxis,
     type PoseMap,
@@ -22,6 +25,17 @@
   const machineId = useMachineId()
   const pt = poseTrackerClient(machineId, () => selectedResource.name ?? '')
   const jog = createResourceMutation(pt, 'doCommand')
+
+  // Stop is its own mutation so it stays callable — and immediately in-flight —
+  // even while a jog/move is pending. It is never gated by motion.busy. Mirrors
+  // StatusBar.svelte's handleStop, duplicated here since the global shell has
+  // no stop control of its own.
+  const stop = createResourceMutation(pt, 'doCommand')
+
+  function handleStop() {
+    requestStop()
+    stop.mutate(toCommandArgs(stopArm()))
+  }
 
   // Live arm-state poll. Lives here (not in the status bar) so the pose/joint
   // readout sits with the jog controls. 4th arg (options) is required — see the
@@ -64,8 +78,57 @@
     return n === undefined ? '—' : n.toFixed(2)
   }
 
-  type Mode = 'cartesian' | 'joint'
+  type Mode = 'cartesian' | 'joint' | 'moveto'
   let mode = $state<Mode>('cartesian')
+
+  // "Move to" — absolute go-to-pose / go-to-joints with a two-step confirm.
+  // The target fields are a FROZEN editable draft: they are only ever
+  // populated by loadCurrent(), never overwritten by the live armState poll,
+  // so the operator's in-progress edits can't be clobbered mid-edit.
+  type MoveKind = 'pose' | 'joints'
+  let moveKind = $state<MoveKind>('pose')
+  let moveConfirm = $state(false)
+  let targetPose = $state<PoseMap>({ x: 0, y: 0, z: 0, o_x: 0, o_y: 0, o_z: 1, theta: 0 })
+  let targetJoints = $state<number[]>([])
+  const moveM = createResourceMutation(pt, 'doCommand')
+
+  function loadCurrent() {
+    if (moveKind === 'pose' && armState.pose) {
+      targetPose = { ...armState.pose }
+    } else {
+      targetJoints = [...armState.joints]
+    }
+    moveConfirm = false
+  }
+
+  const poseValid = $derived(Object.values(targetPose).every((n) => Number.isFinite(n)))
+  const jointsValid = $derived(
+    targetJoints.length === armState.joints.length && targetJoints.every((n) => Number.isFinite(n)),
+  )
+  const canReview = $derived(moveKind === 'pose' ? poseValid : jointsValid)
+
+  async function handleExecute() {
+    if (moveM.isPending || motion.busy > 0) {
+      return
+    }
+    try {
+      await withMove(async () => {
+        const args = moveKind === 'pose' ? moveToPose(targetPose) : moveToJoints(targetJoints)
+        const resp = (await moveM.mutateAsync(toCommandArgs(args))) as Record<string, unknown>
+        if (resp && typeof resp === 'object') {
+          if (resp.pose) {
+            armState.pose = resp.pose as PoseMap
+          }
+          if (Array.isArray(resp.joints)) {
+            armState.joints = resp.joints as number[]
+          }
+        }
+      })
+    } catch {
+      // Surfaced via moveM.error in the template.
+    }
+    moveConfirm = false
+  }
 
   const TRANSLATION_STEPS = [0.1, 1, 10] as const
   const ROTATION_STEPS = [1, 5] as const
@@ -194,6 +257,20 @@
   const toggleInactive = 'border-medium bg-white text-gray-9 hover:border-gray-6'
   const jogKeyClass =
     'jog-key min-h-11 min-w-11 rounded-lg border border-medium bg-white text-lg font-semibold text-gray-9 hover:border-gray-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/40 disabled:cursor-not-allowed disabled:opacity-40'
+  const secondaryButtonClass =
+    'border-medium text-gray-9 hover:border-gray-6 min-h-11 rounded-md border bg-white px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30 disabled:cursor-not-allowed disabled:text-disabled-dark'
+  const primaryButtonClass =
+    'min-h-11 rounded-md border border-gray-9 bg-gray-9 px-4 text-sm font-medium text-white hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/40 disabled:cursor-not-allowed disabled:opacity-40'
+  const dangerButtonClass =
+    'border-danger-dark bg-danger-dark min-h-11 rounded-md border px-4 text-sm font-medium text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-danger-dark/40 disabled:cursor-not-allowed disabled:opacity-60'
+  const inputClass =
+    'border-medium min-h-11 w-full rounded-md border px-2 text-sm tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/40'
+
+  // Lands keyboard focus on the safe (Cancel) button when the Execute
+  // confirmation opens — mirrors ManageFramesPanel's focusOnMount.
+  function focusOnMount(node: HTMLElement) {
+    node.focus()
+  }
 </script>
 
 <DashboardPortal>
@@ -212,6 +289,21 @@
   resizable
 >
   <div class="flex h-full flex-col gap-3 overflow-y-auto p-4">
+    <div class="flex flex-col gap-1">
+      <button
+        type="button"
+        class="bg-danger-dark min-h-11 rounded-md border border-danger-dark font-medium text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-danger-dark/40 disabled:cursor-not-allowed disabled:opacity-60"
+        onclick={handleStop}
+        disabled={stop.isPending}
+        aria-label="Stop arm"
+      >
+        {stop.isPending ? 'Stopping…' : 'STOP'}
+      </button>
+      {#if stop.error}
+        <p class="text-danger-dark text-xs" role="alert">{stop.error.message}</p>
+      {/if}
+    </div>
+
     <div class="flex items-start justify-between gap-2">
       <p class="text-subtle-1 text-xs">Move the arm to position it for capture.</p>
       <div class="flex shrink-0 gap-2" role="group" aria-label="Jog mode">
@@ -220,6 +312,9 @@
         </button>
         <button type="button" class={`${toggleBase} ${mode === 'joint' ? toggleActive : toggleInactive}`} onclick={() => (mode = 'joint')}>
           Joint
+        </button>
+        <button type="button" class={`${toggleBase} ${mode === 'moveto' ? toggleActive : toggleInactive}`} onclick={() => (mode = 'moveto')}>
+          Move to
         </button>
       </div>
     </div>
@@ -268,7 +363,7 @@
               </div>
             {/each}
           </div>
-        {:else}
+        {:else if mode === 'joint'}
           <div class="flex flex-col gap-1.5">
             <span class="text-subtle-2 text-xs">Joint step (deg)</span>
             <div class="flex flex-wrap gap-2" role="group" aria-label="Joint step size">
@@ -290,6 +385,101 @@
             {/each}
             {#if armState.joints.length === 0}
               <p class="text-subtle-2 text-sm italic">No joint data available.</p>
+            {/if}
+          </div>
+        {:else if !armState.hasArm}
+          <p class="text-subtle-2 text-sm italic">Requires a configured arm.</p>
+        {:else}
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-wrap gap-2" role="group" aria-label="Move-to kind">
+              <button type="button" class={`${toggleBase} ${moveKind === 'pose' ? toggleActive : toggleInactive}`} onclick={() => (moveKind = 'pose')}>
+                Pose
+              </button>
+              <button type="button" class={`${toggleBase} ${moveKind === 'joints' ? toggleActive : toggleInactive}`} onclick={() => (moveKind = 'joints')}>
+                Joints
+              </button>
+            </div>
+
+            <button type="button" class={secondaryButtonClass} onclick={loadCurrent}>Load current</button>
+
+            {#if moveKind === 'pose'}
+              <div class="grid grid-cols-2 gap-2">
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">X (mm)</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.x} />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">Y (mm)</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.y} />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">Z (mm)</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.z} />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">OX</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_x} />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">OY</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_y} />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">OZ</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.o_z} />
+                </label>
+                <label class="flex flex-col gap-1 text-xs">
+                  <span class="text-subtle-2">&#952; (deg)</span>
+                  <input type="number" step="any" class={inputClass} bind:value={targetPose.theta} />
+                </label>
+              </div>
+            {:else if targetJoints.length === 0}
+              <p class="text-subtle-2 text-sm italic">Load current to populate joint targets.</p>
+            {:else}
+              <div class="grid grid-cols-2 gap-2">
+                {#each targetJoints as _joint, i (i)}
+                  <label class="flex flex-col gap-1 text-xs">
+                    <span class="text-subtle-2">J{i}</span>
+                    <input type="number" step="any" class={inputClass} bind:value={targetJoints[i]} />
+                  </label>
+                {/each}
+              </div>
+            {/if}
+
+            {#if !moveConfirm}
+              <button type="button" class={primaryButtonClass} disabled={!canReview} onclick={() => (moveConfirm = true)}>
+                Review target
+              </button>
+            {:else}
+              <div class="border-danger-dark bg-danger-light flex flex-col gap-2 rounded-md border p-3" role="alert">
+                {#if moveKind === 'pose'}
+                  <p class="text-gray-9 text-sm tabular-nums">
+                    X {fmt(targetPose.x)}, Y {fmt(targetPose.y)}, Z {fmt(targetPose.z)}, OX {fmt(targetPose.o_x)}, OY {fmt(targetPose.o_y)}, OZ {fmt(targetPose.o_z)}, &#952; {fmt(targetPose.theta)}
+                  </p>
+                {:else}
+                  <p class="text-gray-9 text-sm tabular-nums">
+                    {targetJoints.map((j, i) => `J${i}=${fmt(j)}`).join(', ')}
+                  </p>
+                {/if}
+                <p class="text-gray-9 text-sm">The arm will move to this absolute target.</p>
+                <div class="flex gap-2">
+                  <button
+                    type="button"
+                    class={dangerButtonClass}
+                    disabled={moveM.isPending || motion.busy > 0}
+                    onclick={handleExecute}
+                  >
+                    {moveM.isPending ? 'Moving…' : 'Execute'}
+                  </button>
+                  <button type="button" class={secondaryButtonClass} use:focusOnMount onclick={() => (moveConfirm = false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            {/if}
+
+            {#if moveM.error}
+              <p class="text-danger-dark text-xs" role="alert">{moveM.error.message}</p>
             {/if}
           </div>
         {/if}
