@@ -17,6 +17,7 @@
     "@viamrobotics/sdk": "^0.69.0",
     "@viamrobotics/svelte-sdk": "^1.2.3",
     "@viamrobotics/tweakpane-config": "^0.1.1",
+    "earcut": "^3.2.3",
     "js-cookie": "^3.0.5",
     "tailwind-merge": "^3.6.0",
     "threlte-uikit": "^2.0.1"
