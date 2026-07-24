@@ -25,110 +25,40 @@
   }
 </script>
 
-<main class="onboarding">
-  <div class="card">
-    <h1>Teach Pendant</h1>
-    <p class="lead">Choose the pose-tracker resource to teach with.</p>
+<main class="bg-light flex min-h-screen items-center justify-center p-6">
+  <div class="border-light flex w-full max-w-md flex-col gap-3 rounded-lg border bg-white p-7 shadow-sm">
+    <h1 class="text-gray-9 text-xl font-semibold">Teach Pendant</h1>
+    <p class="text-subtle-1 text-sm">Choose the pose-tracker resource to teach with.</p>
 
     {#if resources.current.length === 0}
-      <p class="muted">Discovering pose-tracker resources…</p>
-      <p class="hint">
-        If none appear, add a <code>pose_tracker</code> component (for example
-        <code>viam-labs:teach-frames:pose-tracker</code>) to this machine and reload.
+      <p class="text-subtle-2 text-sm italic">Discovering pose-tracker resources…</p>
+      <p class="text-subtle-2 text-xs">
+        If none appear, add a
+        <code class="bg-light font-roboto-mono rounded px-1 py-0.5 text-[0.85em]">pose_tracker</code>
+        component (for example
+        <code class="bg-light font-roboto-mono rounded px-1 py-0.5 text-[0.85em]"
+          >viam-labs:teach-frames:pose-tracker</code
+        >) to this machine and reload.
       </p>
     {:else}
-      <label for="resource">Pose-tracker resource</label>
-      <select id="resource" bind:value={choice}>
+      <label for="resource" class="text-subtle-1 mt-1 text-sm">Pose-tracker resource</label>
+      <select
+        id="resource"
+        bind:value={choice}
+        class="border-medium hover:border-gray-6 focus:border-gray-9 text-gray-9 min-h-11 w-full rounded-md border bg-white px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/30"
+      >
         {#each resources.current as resource (resource.name)}
           <option value={resource.name}>{resource.name}</option>
         {/each}
       </select>
-      <button type="button" onclick={start} disabled={!choice}>Start teaching</button>
+      <button
+        type="button"
+        onclick={start}
+        disabled={!choice}
+        class="border-gray-9 bg-gray-9 mt-2 min-h-11 rounded-md border px-4 text-sm font-medium text-white hover:border-black hover:bg-black active:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-9/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:!border-disabled-light disabled:!bg-disabled-light disabled:text-disabled-dark"
+      >
+        Start teaching
+      </button>
     {/if}
   </div>
 </main>
-
-<style>
-  .onboarding {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-  }
-
-  .card {
-    width: 100%;
-    max-width: 26rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    padding: 1.75rem;
-    background: var(--surface-panel);
-    border: 1px solid var(--border-panel);
-    border-radius: var(--radius-xl);
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 1.4rem;
-  }
-
-  .lead {
-    margin: 0;
-    color: var(--ink-secondary);
-  }
-
-  label {
-    font-size: 0.9rem;
-    color: var(--ink-secondary);
-    margin-top: 0.25rem;
-  }
-
-  select {
-    min-height: 44px;
-    padding: 0.5rem 0.6rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-control);
-    background: var(--surface-control);
-    color: inherit;
-    font-size: 1rem;
-  }
-
-  button {
-    min-height: 44px;
-    margin-top: 0.5rem;
-    padding: 0.6rem 1.1rem;
-    border-radius: var(--radius-md);
-    border: none;
-    background: var(--accent);
-    color: var(--ink-on-accent);
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .muted {
-    margin: 0;
-    color: var(--ink-muted);
-    font-style: italic;
-  }
-
-  .hint {
-    margin: 0;
-    font-size: 0.85rem;
-    color: var(--ink-muted);
-  }
-
-  code {
-    background: var(--surface-base);
-    padding: 0.1rem 0.3rem;
-    border-radius: var(--radius-sm);
-    font-size: 0.85em;
-  }
-</style>

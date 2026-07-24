@@ -136,6 +136,13 @@ type teachTracker struct {
 	// resolved.
 	flangeInDest posesource.PoseSource
 
+	// armInDest reads the ARM BASE pose in destFrame (world). move_to_pose accepts
+	// a target in destFrame (matching the pose reported by get_arm_state/jog), but
+	// arm.MoveToPosition expects a target in the arm's own base frame, so this is
+	// used to convert: armBaseTarget = inverse(armInDest) ∘ worldTarget. Non-nil
+	// whenever the arm resolved (not gated on camera mount, unlike flangeInDest).
+	armInDest posesource.PoseSource
+
 	// targetMu guards currentTarget.
 	targetMu      sync.Mutex
 	currentTarget *r3.Vector
@@ -199,6 +206,7 @@ func newPoseTracker(
 		} else {
 			pt.flange = &posesource.ArmSource{Arm: a}
 			pt.arm = a
+			pt.armInDest = &posesource.MotionSource{Motion: mot, Component: cfg.Arm, DestFrame: dest}
 
 			// Gated on the arm actually resolving, not just on cfg.Arm being set:
 			// MotionSource holds only a name string, so it would be non-nil even for

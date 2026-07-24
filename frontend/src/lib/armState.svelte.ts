@@ -1,9 +1,10 @@
 import type { PoseMap } from './poseTracker'
 
-// Shared live arm-state snapshot. StatusBar owns the get_arm_state poll and
-// writes into this store; any other panel (JogPanel, TcpPanel) reads it to
-// decide whether to render its controls enabled, without each panel running
-// its own duplicate query.
+// Shared live arm-state snapshot. JogPanel owns the get_arm_state poll and
+// writes into this store; TcpTriad and FrameDefinePlugin (and any other
+// panel) are pure readers, deciding whether to render controls enabled or
+// where to draw scene geometry, without each running its own duplicate
+// query.
 export const armState = $state<{
   pose: PoseMap | null
   joints: number[]

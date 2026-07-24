@@ -15,7 +15,8 @@ import { Struct, type JsonValue } from '@viamrobotics/sdk'
 
 export type CartesianAxis = 'x' | 'y' | 'z' | 'roll' | 'pitch' | 'yaw'
 
-export const jogCartesian = (axis: CartesianAxis, step: number) => ({ jog_cartesian: { axis, step } })
+export const jogCartesian = (axis: CartesianAxis, step: number, frame?: string) =>
+  frame === undefined ? { jog_cartesian: { axis, step } } : { jog_cartesian: { axis, step, frame } }
 export const jogJoint = (joint: number, step: number) => ({ jog_joint: { joint, step } })
 export const stopArm = () => ({ stop_arm: {} })
 export const getArmState = () => ({ get_arm_state: {} })
@@ -38,6 +39,8 @@ export const teachTcpPosition = () => ({ teach_tcp_position: {} })
 export const teachTcpOrientation = (o_x: number, o_y: number, o_z: number, theta: number) => ({
   teach_tcp_orientation: { o_x, o_y, o_z, theta },
 })
+export const moveToJoints = (positions: number[]) => ({ move_to_joints: { positions } })
+export const moveToPose = (pose: PoseMap) => ({ move_to_pose: { pose } })
 
 // Converts a plain-object DoCommand payload (as produced by the builders
 // above) into the `Struct` that `PoseTrackerClient.doCommand` requires.
@@ -120,6 +123,16 @@ export interface TeachTcpOrientationResponse {
   orientation: { o_x: number; o_y: number; o_z: number; theta: number }
 }
 
+export interface MoveToJointsResponse {
+  joints: number[]
+  moved: boolean
+}
+
+export interface MoveToPoseResponse {
+  pose: PoseMap
+  moved: boolean
+}
+
 // Hand-eye calibration DoCommands (see models/posetracker/handeye.go for the
 // authoritative Go-side shapes).
 
@@ -129,11 +142,11 @@ export const getHandeyeBuffer = () => ({ get_handeye_buffer: {} })
 export const clearHandeyeBuffer = () => ({ clear_handeye_buffer: {} })
 export const solveHandeye = () => ({ solve_handeye: {} })
 
-// Maps a click at (displayX, displayY) inside an <img> of rendered size
-// (clientW, clientH) to the native source pixel of an image (naturalW, naturalH).
-// The <img> is styled `object-fit: fill` (see HandEyePanel.svelte), so this is a
-// straight ratio with no letterbox offset — if that ever changes to
-// `object-fit: contain`, this helper must add the letterbox offsets to match.
+// Maps a click at (displayX, displayY) inside the rendered camera image of size
+// (clientW, clientH) to the native source pixel (naturalW, naturalH). The image
+// is styled `object-fit: fill` (see HandeyeWizard.svelte), so this is a straight
+// ratio with no letterbox offset — if that ever changes to `object-fit: contain`,
+// this helper must add the letterbox offsets to match.
 // Result is clamped to valid pixel indices [0, natural-1].
 export function displayToNativePixel(
   displayX: number, displayY: number,

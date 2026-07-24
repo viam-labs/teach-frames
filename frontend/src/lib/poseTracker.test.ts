@@ -28,6 +28,8 @@ import {
   captureHandeyeTarget,
   captureHandeyeView,
   getHandeyeMode,
+  moveToJoints,
+  moveToPose,
 } from './poseTracker'
 
 describe('DoCommand payload builders', () => {
@@ -37,6 +39,14 @@ describe('DoCommand payload builders', () => {
 
   it('jogCartesian keeps negative step sign for angular axes', () => {
     expect(jogCartesian('yaw', -5)).toEqual({ jog_cartesian: { axis: 'yaw', step: -5 } })
+  })
+
+  it('jogCartesian omits frame when not given (back-compat)', () => {
+    expect(jogCartesian('x', 5)).toEqual({ jog_cartesian: { axis: 'x', step: 5 } })
+  })
+
+  it('jogCartesian includes frame when given', () => {
+    expect(jogCartesian('x', 5, 'table')).toEqual({ jog_cartesian: { axis: 'x', step: 5, frame: 'table' } })
   })
 
   it('jogJoint emits the joint/step verb map', () => {
@@ -101,6 +111,15 @@ describe('DoCommand payload builders', () => {
     expect(teachTcpOrientation(0, 0, 1, 90)).toEqual({
       teach_tcp_orientation: { o_x: 0, o_y: 0, o_z: 1, theta: 90 },
     })
+  })
+
+  it('moveToJoints builds the command', () => {
+    expect(moveToJoints([90, 0, 45])).toEqual({ move_to_joints: { positions: [90, 0, 45] } })
+  })
+
+  it('moveToPose builds the command', () => {
+    const p = { x: 1, y: 2, z: 3, o_x: 0, o_y: 0, o_z: 1, theta: 0 }
+    expect(moveToPose(p)).toEqual({ move_to_pose: { pose: p } })
   })
 })
 

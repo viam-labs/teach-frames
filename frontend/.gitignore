@@ -1,2 +1,5 @@
 node_modules/
 dist/
+
+# Transient artifacts from local browser-automation verification
+.playwright-cli/

@@ -1,18 +1,35 @@
 <script lang="ts">
   import { ViamProvider } from '@viamrobotics/svelte-sdk'
+  import { Visualizer } from '@viamrobotics/motion-tools'
+  import { Struct } from '@viamrobotics/sdk'
   import { currentMachine, provideMachineId, type MachineIdentity } from './lib/machine'
   import { selectedResource } from './lib/resource.svelte'
+  import { createFrameDefineWizard } from './lib/wizard/frameDefine.svelte'
+  import { createTcpTeachWizard } from './lib/wizard/tcpTeach.svelte'
+  import { createHandeyeWizard } from './lib/wizard/handeyeCalib.svelte'
+  import { frameRevision } from './lib/frameRevision.svelte'
   import ResourcePicker from './panels/ResourcePicker.svelte'
-  import StatusBar from './panels/StatusBar.svelte'
+  import FrameDefineWizard from './panels/FrameDefineWizard.svelte'
+  import TcpTeachWizard from './panels/TcpTeachWizard.svelte'
+  import HandeyeWizard from './panels/HandeyeWizard.svelte'
+  import ManageFramesPanel from './panels/ManageFramesPanel.svelte'
   import JogPanel from './panels/JogPanel.svelte'
-  import CapturePanel from './panels/CapturePanel.svelte'
-  import FramePanel from './panels/FramePanel.svelte'
-  import TcpPanel from './panels/TcpPanel.svelte'
-  import HandEyePanel from './panels/HandEyePanel.svelte'
-  import EyeInHandPanel from './panels/EyeInHandPanel.svelte'
+  import TcpTriad from './scene/TcpTriad.svelte'
+  import FrameDefinePlugin from './scene/FrameDefinePlugin.svelte'
 
   let machine: MachineIdentity | undefined
   let error: string | undefined
+
+  // Single shared instance: the panel (this file's <FrameDefineWizard>) and
+  // the scene plugin (Task 5) must read/write the SAME wizard store so the
+  // panel's steps and the scene's spatial story never disagree.
+  const wizard = createFrameDefineWizard()
+  // Same reasoning as `wizard` above: created outside the {#key frameRevision}
+  // block so TCP-teach progress survives the Bug-1 scene remount.
+  const tcpWizard = createTcpTeachWizard()
+  // Same reasoning again: hand-eye calibration progress must survive the
+  // Bug-1 scene remount too.
+  const handeyeWizard = createHandeyeWizard()
 
   try {
     machine = currentMachine()
@@ -20,36 +37,67 @@
   } catch (err) {
     error = err instanceof Error ? err.message : String(err)
   }
+
+  // The Visualizer's part-config layer has two backends. Without localConfigProps
+  // it takes the STANDALONE path, which calls createAppQuery('getRobotPart') and
+  // needs a ViamAppProvider/app-key credentials we deliberately don't supply
+  // (this Application authenticates with only the machine cookie). That path
+  // crashes: "can't access property 'current', viamClient is undefined".
+  // Passing localConfigProps routes it to the EMBEDDED (host-owned) backend
+  // instead. We hand it a no-op empty config: the live scene doesn't need it
+  // (the arm and taught-frame triads come from the robot's frameSystemConfig +
+  // world_state_store; part config only tints frame colors and drives build-mode
+  // editing, which we don't use), and frame persistence stays on our own
+  // pose-tracker define_frame DoCommand.
+  const localConfigProps = {
+    current: Struct.fromJson({ components: [] }),
+    isDirty: false,
+    setLocalPartConfig: () => {},
+  }
+
+  // Same standalone-vs-embedded split, second (and last) seam: useFragmentInfo.
+  // Clicking a component in the scene makes the Details panel ask whether that
+  // component is fragment-defined, which on the STANDALONE path fires
+  // createAppQuery('getFragment') and hits the same missing-viamClient crash
+  // (and locks the UI in a re-render loop). Passing componentNameToFragmentInfo
+  // — even an empty map — routes it to the EMBEDDED path. Empty is correct here:
+  // we don't drive fragment-variable editing, and no component needs to report
+  // as fragment-defined. These two props (with localConfigProps) are the only
+  // createAppQuery/createAppMutation call sites in the Visualizer, so this
+  // fully closes the app-cloud dependency for our cookie-only Application.
+  const componentNameToFragmentInfo = {}
 </script>
 
 {#if error}
-  <main class="error-screen">
-    <p class="error">Unable to connect to machine: {error}</p>
-  </main>
+  <main class="error-screen"><p class="error">Unable to connect to machine: {error}</p></main>
 {:else if machine}
   <ViamProvider dialConfigs={{ [machine.id]: machine.dialConf }}>
     {#if selectedResource.name}
-      <div class="app-shell">
-        <h1 class="sr-only">Teach pendant</h1>
-        <StatusBar />
-        <main class="layout">
-          <section class="jog-region panel">
-            <JogPanel />
-          </section>
-          <div class="side-region">
-            <section class="panel">
-              <CapturePanel />
-            </section>
-            <section class="panel">
-              <FramePanel />
-            </section>
-            <section class="panel">
-              <TcpPanel />
-            </section>
-            <HandEyePanel />
-            <EyeInHandPanel />
-          </div>
-        </main>
+      <div class="viz-host">
+        <!--
+          Keyed on frameRevision so the Visualizer scene remounts (and
+          useWorldState re-initializes/re-snapshots) after OUR OWN taught-frame
+          commits/deletes/clears. Stopgap for a motion-tools bug where the
+          world_state_store live stream goes permanently stale after the first
+          AlwaysRebuild reconfigure — see
+          docs/plans/2026-07-20-motion-tools-wss-reconfigure-upstream-patch.md.
+          Scoped to just <Visualizer> (not ViamProvider) so the robot
+          connection + query cache survive the remount; only the 3D scene
+          re-initializes.
+        -->
+        {#key frameRevision.value}
+          <Visualizer partID={machine.id} {localConfigProps} {componentNameToFragmentInfo}>
+            {#snippet children()}
+              <TcpTriad />
+              <FrameDefinePlugin {wizard} />
+              <FrameDefineWizard {wizard} />
+              <TcpTeachWizard wizard={tcpWizard} />
+              <HandeyeWizard wizard={handeyeWizard} />
+              <ManageFramesPanel />
+              <JogPanel />
+            {/snippet}
+          </Visualizer>
+        {/key}
       </div>
     {:else}
       <ResourcePicker />
@@ -58,201 +106,9 @@
 {/if}
 
 <style>
-  :global(html, body) {
-    margin: 0;
-    height: 100%;
-    background: var(--surface-base);
-    color: var(--ink);
-    font-family:
-      system-ui,
-      -apple-system,
-      'Segoe UI',
-      sans-serif;
-  }
-
-  :global(*) {
-    box-sizing: border-box;
-  }
-
-  /* Motion layer — one place so every control gets the same responsive feel.
-     State-conveying only: hover, current selection, press, enable/disable.
-     Transitions cover color/border/shadow/opacity/transform; no layout props. */
-  :global(button),
-  :global(select),
-  :global(input),
-  :global(.dot) {
-    transition:
-      background-color var(--transition-fast) var(--ease-out),
-      border-color var(--transition-fast) var(--ease-out),
-      color var(--transition-fast) var(--ease-out),
-      box-shadow var(--transition-fast) var(--ease-out),
-      opacity var(--transition-fast) var(--ease-out),
-      filter var(--transition-fast) var(--ease-out),
-      transform var(--transition-fast) var(--ease-out);
-  }
-
-  /* Uniform hover: brighten whatever the control's own color is, so accent and
-     neutral controls both acknowledge the pointer without per-control rules. */
-  :global(button:hover:not(:disabled)),
-  :global(select:hover),
-  :global(input:hover:not(:disabled)) {
-    /* Gentle lift; kept at 1.08 so it can't pull white-on-accent text below AA. */
-    filter: brightness(1.08);
-  }
-
-  /* Tactile press — a small nudge on any button. */
-  :global(button:active:not(:disabled)) {
-    transform: translateY(1px);
-  }
-
-  /* Keyboard focus: a clear, high-contrast ring on every focusable control.
-     :focus-visible keeps it keyboard-only, so pointer users don't see rings on
-     click. WCAG 2.4.7. */
-  :global(:focus-visible) {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-
-  /* Accessibility: honor Reduce Motion. Feedback still changes state, just
-     instantly — no animated transitions. */
-  @media (prefers-reduced-motion: reduce) {
-    :global(*) {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-      scroll-behavior: auto !important;
-    }
-  }
-
-  /* Shared panel chrome — keeps every panel's header, titles, and status
-     messages visually consistent. Individual panels supply their own controls. */
-  :global(.panel-header) {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.75rem 1rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.25rem;
-  }
-
-  :global(.panel-titles) {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    min-width: 0;
-  }
-
-  :global(.panel-header h2) {
-    margin: 0;
-    font-size: 1.15rem;
-  }
-
-  :global(.panel-subtitle) {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--ink-muted);
-  }
-
-  :global(.panel-actions) {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  /* Empty states ("No X yet") — muted, quiet. */
-  :global(.panel-empty) {
-    margin: 0;
-    color: var(--ink-muted);
-    font-style: italic;
-    font-size: 0.9rem;
-  }
-
-  /* Warnings (disabled/unavailable, e.g. no arm configured) — amber. */
-  :global(.panel-warning) {
-    margin: 0;
-    color: var(--warning);
-    font-size: 0.9rem;
-  }
-
-  /* Data tables can carry more columns than a stacked, full-width panel has
-     room for on a phone. Scroll them inside their own box so the page body
-     never scrolls sideways. */
-  :global(.table-scroll) {
-    overflow-x: auto;
-  }
-
-  /* Visually hidden, still announced by screen readers. For labels a sighted
-     user gets from context but assistive tech needs spelled out. */
-  :global(.sr-only) {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-    border: 0;
-  }
-
-  .error-screen {
-    padding: 1rem;
-  }
-
-  .error {
-    color: var(--error-text);
-    padding: 1rem;
-  }
-
-  .app-shell {
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-  }
-
-  .layout {
-    flex: 1;
-    display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-    gap: 1rem;
-    padding: 1rem;
-    align-items: start;
-  }
-
-  .side-region {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    min-width: 0;
-  }
-
-  /* Global (not scoped to App.svelte): HandEyePanel and EyeInHandPanel gate
-     their own visibility on the handeye mode, so each owns its .panel wrapper
-     internally rather than App.svelte wrapping it unconditionally — otherwise
-     the wrapper for the non-matching panel would render as an empty bordered
-     strip. Every other panel is still wrapped by App.svelte below. */
-  :global(.panel) {
-    background: var(--surface-panel);
-    border: 1px solid var(--border-panel);
-    border-radius: var(--radius-xl);
-    min-width: 0;
-  }
-
-  .jog-region {
-    min-width: 0;
-  }
-
-  /* The Jog panel is the primary surface — its title outranks the secondary
-     panels' 1.15rem headings so it reads as primary even when the grid
-     collapses to one column and the width cue disappears. */
-  .jog-region :global(.panel-header h2) {
-    font-size: 1.4rem;
-  }
-
-  @media (max-width: 900px) {
-    .layout {
-      grid-template-columns: 1fr;
-    }
-  }
+  :global(html, body) { margin: 0; height: 100%; }
+  :global(*) { box-sizing: border-box; }
+  .viz-host { position: fixed; inset: 0; }
+  .error-screen { padding: 1rem; }
+  .error { color: #ff8080; padding: 1rem; }
 </style>
