@@ -232,7 +232,7 @@ func (p *AppPersister) SaveComponentFrame(
 	if err != nil {
 		return fmt.Errorf("create viam client: %w", err)
 	}
-	defer viamClient.Close()
+	defer func() { _ = viamClient.Close() }()
 
 	appClient := viamClient.AppClient()
 	part, _, err := appClient.GetRobotPart(ctx, p.partID)
@@ -265,7 +265,7 @@ func (p *AppPersister) Save(ctx context.Context, frames []config.FrameSpec) erro
 	if err != nil {
 		return fmt.Errorf("create viam client: %w", err)
 	}
-	defer viamClient.Close()
+	defer func() { _ = viamClient.Close() }()
 
 	appClient := viamClient.AppClient()
 

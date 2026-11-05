@@ -67,7 +67,7 @@ func newWSS(
 	if err != nil {
 		return nil, err
 	}
-	pt, err := posetracker.FromDependencies(deps, cfg.PoseTracker)
+	pt, err := posetracker.FromProvider(deps, cfg.PoseTracker)
 	if err != nil {
 		return nil, err
 	}

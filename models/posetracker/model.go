@@ -176,7 +176,7 @@ func newPoseTracker(
 		return nil, err
 	}
 
-	mot, err := motion.FromDependencies(deps, cfg.motionServiceOrDefault())
+	mot, err := motion.FromProvider(deps, cfg.motionServiceOrDefault())
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func newPoseTracker(
 	pt.cameraMount = cfg.cameraMountOrDefault()
 	pt.armName = cfg.Arm
 	if cfg.Arm != "" {
-		a, aerr := arm.FromDependencies(deps, cfg.Arm)
+		a, aerr := arm.FromProvider(deps, cfg.Arm)
 		if aerr != nil {
 			// Declared dependency should resolve; warn and leave TCP teaching disabled.
 			logger.Warnw("TCP teaching disabled: arm dependency not resolvable", "arm", cfg.Arm, "err", aerr)
@@ -220,7 +220,7 @@ func newPoseTracker(
 
 	pt.cameraName = cfg.Camera
 	if cfg.Camera != "" {
-		cam, cerr := camera.FromDependencies(deps, cfg.Camera)
+		cam, cerr := camera.FromProvider(deps, cfg.Camera)
 		if cerr != nil {
 			// Declared dependency should resolve; warn and leave hand-eye calibration disabled.
 			logger.Warnw("hand-eye calibration disabled: camera dependency not resolvable", "camera", cfg.Camera, "err", cerr)

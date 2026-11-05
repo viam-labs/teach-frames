@@ -158,9 +158,8 @@ func TestBufferReturnsCopy(t *testing.T) {
 	got := s.Buffer()
 	test.That(t, len(got), test.ShouldEqual, 2)
 
-	// Mutate the returned slice — set a nil element and truncate it.
+	// Mutate an element of the returned slice.
 	got[0] = nil
-	got = got[:1]
 
 	// The store must be unaffected.
 	test.That(t, s.BufferLen(), test.ShouldEqual, 2)
@@ -201,9 +200,8 @@ func TestTCPBufferReturnsCopy(t *testing.T) {
 	got := s.TCPBuffer()
 	test.That(t, len(got), test.ShouldEqual, 2)
 
-	// Mutate the returned slice — set a nil element and truncate it.
+	// Mutate an element of the returned slice.
 	got[0] = nil
-	got = got[:1]
 
 	// The store must be unaffected.
 	test.That(t, s.TCPBufferLen(), test.ShouldEqual, 2)
